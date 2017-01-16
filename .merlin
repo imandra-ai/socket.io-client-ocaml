@@ -1,0 +1,7 @@
+SRC src
+SRC test
+BUILD _build/src
+BUILD _build/test
+PKG cohttp.lwt
+PKG lwt
+PKG yojson

@@ -1,0 +1,8 @@
+description = "Engine.io client"
+version = "%%VERSION_NUM%%"
+requires = ""
+
+archive(byte) = "engineio_client.cma"
+archive(native) = "engineio_client.cmxa"
+plugin(byte) = "engineio_client.cma"
+plugin(native) = "engineio_client.cmxs"

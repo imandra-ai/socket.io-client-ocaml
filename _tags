@@ -1,0 +1,8 @@
+true: thread,bin_annot
+
+true: package(cohttp.lwt)
+true: package(lwt)
+true: package(stringext)
+true: package(yojson)
+
+<src>: include
