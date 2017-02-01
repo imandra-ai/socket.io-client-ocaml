@@ -5,27 +5,27 @@ var server = engine.listen(3001);
 server.on('connection', function(socket){
     // socket.send('utf 8 string');
     // socket.send(new Buffer([0, 1, 2, 3, 4, 5])); // binary data
-    console.log('connection', arguments);
+    console.log('new connection', socket.id);
     socket.on('packet', function() {
-        console.log('packet', arguments);
+        console.log(socket.id, 'packet', arguments);
     });
     socket.on('packetCreate', function() {
-        console.log('packetCreate', arguments);
+        console.log(socket.id, 'packetCreate', arguments);
     });
     socket.on('error', function() {
-        console.log('error', arguments);
+        console.log(socket.id, 'error', arguments);
     });
     socket.on('message', function(data) {
-        console.log('message', arguments);
+        console.log(socket.id, 'message', arguments);
         socket.send('thank you for your message, you sent: ' + data);
     });
     socket.on('close', function() {
-        console.log('close', arguments);
+        console.log(socket.id, 'close', arguments);
     });
-    socket.on('flush', function() {
-        console.log('flush', arguments);
-    });
-    socket.on('drain', function() {
-        console.log('drain', arguments);
-    });
+    // socket.on('flush', function() {
+    //     console.log(socket.id, 'flush', arguments);
+    // });
+    // socket.on('drain', function() {
+    //     console.log(socket.id, 'drain', arguments);
+    // });
 });
