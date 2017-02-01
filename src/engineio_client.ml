@@ -187,7 +187,7 @@ module Transport = struct
 
     let log_packet (packet_type, packet_data) =
       Lwt.(
-        Lwt_io.printlf "decoded packet: %s\ndata: '%s'"
+        Lwt_io.printlf "decoded packet: %s data: '%s'"
           (Packet.string_of_packet_type packet_type)
           (match packet_data with
            | Packet.P_None -> "no data"
@@ -195,100 +195,102 @@ module Transport = struct
            | Packet.P_Binary codes -> Format.sprintf "binary packet_data of length %i" (List.length codes))
       )
 
-    let process_packet push_packet t (packet_type, packet_data) =
-      Lwt.(
-        log_packet (packet_type, packet_data) >>= fun () ->
+    let process_packet : t -> Packet.t -> t =
+      fun t (packet_type, packet_data) ->
         let t =
           match t.ready_state with
-          | Opening -> { t with ready_state = Open; writeable = true }
+          | Opening -> { t with
+                         ready_state = Open
+                       ; writeable = true
+                       }
           | _ -> t
         in
-        let t =
-          (match packet_type with
-           | Packet.CLOSE -> { t with ready_state = Closed }
-           | _ -> t
-          )
-        in
-        push_packet (Some (packet_type, packet_data));
-        return t
-      )
+        match packet_type with
+        | Packet.CLOSE -> { t with ready_state = Closed }
+        | _ -> t
 
-    let process_response t push_packet (resp, body) =
-        Lwt.(Cohttp.(Cohttp_lwt_unix.(
-            let code =
-              resp
-              |> Response.status
-              |> Code.code_of_status in
-            Lwt_io.printlf "Received status code: %i" code >>= fun () ->
-            if Code.is_success code then
-              Lwt_stream.fold_s
-                (fun line t ->
-                   Lwt_io.printlf "Got line:          '%s'" (String.escaped line) >>= fun () ->
-                   let packets = Parser.decode_payload_as_binary line in
-                   Lwt_list.fold_left_s (process_packet push_packet) t packets)
-                (Cohttp_lwt_body.to_stream body)
-                t
-            else
-              Cohttp_lwt_body.to_string body >>= fun body ->
-              Lwt_io.printl body >>= fun () ->
-              fail_with (Format.sprintf "bad response status: %i" code)
+    let process_response : Cohttp_lwt_unix.Response.t * Cohttp_lwt_body.t -> Packet.t Lwt_stream.t Lwt.t =
+      fun (resp, body) ->
+      Lwt.(Cohttp.(Cohttp_lwt_unix.(
+          let code =
+            resp
+            |> Response.status
+            |> Code.code_of_status in
+          Lwt_io.printlf "Received status code: %i" code >>= fun () ->
+          if Code.is_success code then
+            Cohttp_lwt_body.to_stream body
+            |> Lwt_stream.map_list_s
+              (fun line ->
+                 Lwt_io.printlf "Got line:          '%s'" (String.escaped line) >>= fun () ->
+                 let packets = Parser.decode_payload_as_binary line in
+                 Lwt_list.iter_s log_packet packets >>= fun () ->
+                 return packets)
+            |> return
+          else
+            Cohttp_lwt_body.to_string body >>= fun body ->
+            Lwt_io.printl body >>= fun () ->
+            fail_with (Format.sprintf "bad response status: %i" code)
         )))
 
-
-    let do_poll t push_packet =
-      Lwt.(
-        let t = { t with polling = true } in
-        Cohttp.(Cohttp_lwt_unix.(
-            Lwt_io.printlf "Sending GET request %s" (Uri.to_string t.uri) >>= fun () ->
-            Client.get
-              ~headers:(Header.init_with "accept" "application/json")
-              t.uri >>= process_response t push_packet
-          ))
-      )
+    let do_poll : t -> Packet.t Lwt_stream.t Lwt.t =
+      fun t ->
+        Lwt.(
+          let t = { t with polling = true } in
+          Cohttp.(Cohttp_lwt_unix.(
+              Lwt_io.printlf "Sending GET request %s" (Uri.to_string t.uri) >>= fun () ->
+              Client.get
+                ~headers:(Header.init_with "accept" "application/json")
+                t.uri >>= process_response
+            ))
+        )
 
     let write : t -> Packet.t list -> unit Lwt.t =
       fun t packets ->
-      Lwt.(
-        Cohttp.(Cohttp_lwt_unix.(
-            let encoded_payload =
-              packets
-              |> List.map Parser.encode_packet
-              |> String.concat ""
-            in
-            Lwt_io.printlf "Sending POST request to '%s' with data '%s'"
-              (Uri.to_string t.uri)
-              (encoded_payload |> String.escaped)
-            >>= fun () ->
-            let body =
-              encoded_payload
-              |> Cohttp_lwt_body.of_string
-            in
-            catch
-              (fun () ->
-                 Client.post
-                   ~headers:(Header.init_with "content-type" "application/octet-stream")
-                   ~body:body
-                   t.uri >>= fun (resp, body) ->
-                 return_unit)
-              (fun exn ->
-                 match exn with
-                 | Failure "Client connection was closed" -> return_unit
-                 | exn -> fail exn
-              )
-          ))
-      )
+        Lwt.(
+          Cohttp.(Cohttp_lwt_unix.(
+              let encoded_payload =
+                packets
+                |> List.map Parser.encode_packet
+                |> String.concat ""
+              in
+              Lwt_io.printlf "Sending POST request to '%s' with data '%s'"
+                (Uri.to_string t.uri)
+                (encoded_payload |> String.escaped)
+              >>= fun () ->
+              let body =
+                encoded_payload
+                |> Cohttp_lwt_body.of_string
+              in
+              catch
+                (fun () ->
+                   Client.post
+                     ~headers:(Header.init_with "content-type" "application/octet-stream")
+                     ~body:body
+                     t.uri >>= fun (resp, body) ->
+                   return_unit)
+                (fun exn ->
+                   match exn with
+                   | Failure "Client connection was closed" -> return_unit
+                   | exn -> fail exn
+                )
+            ))
+        )
 
-    let open' t packets_send_stream push_packet_recv =
-      match t.ready_state with
-      | Closed ->
-        let t =
-          { t with
-            ready_state = Opening
-          }
-        in
-        do_poll t push_packet_recv
-      | _ ->
-        Lwt.return t
+    let open' : t -> (t * Packet.t Lwt_stream.t) Lwt.t =
+      fun t ->
+        Lwt.(
+          match t.ready_state with
+          | Closed ->
+            let t =
+              { t with
+                ready_state = Opening
+              }
+            in
+            do_poll t >>= fun packets ->
+            return (t, packets)
+          | _ ->
+            Lwt.fail_with "open: transport is not Closed"
+        )
 
     let close t push_packet =
       match t.ready_state with
@@ -296,8 +298,8 @@ module Transport = struct
       | Open ->
         let t =
           { t with
-          ready_state = Closed
-        }
+            ready_state = Closed
+          }
         in
         Lwt.(
           write t [(Packet.CLOSE, Packet.P_None)] >>= fun _ -> return t
@@ -309,7 +311,7 @@ module Transport = struct
   (* TODO: allow different transports *)
 
   type t = Polling.t
-    (* | Polling of Polling.t *)
+  (* | Polling of Polling.t *)
 
 
   (* let string_of_t = function *)
@@ -364,19 +366,24 @@ module Socket = struct
         | _ -> raise (Invalid_argument "expected an object")
       )
 
-  let open' uri packets_send_stream push_packet_recv =
-    let transport =
-      Transport.Polling.create (make_uri uri) in
-    let socket =
-      { ready_state = Opening
-      ; transport = transport
-      ; sid = None
-      }
-    in
-    Lwt.(
-      Transport.Polling.open' transport packets_send_stream push_packet_recv >>= fun transport ->
-      return { socket with transport = transport }
-    )
+  let open' : Uri.t -> (t * Packet.t Lwt_stream.t) Lwt.t =
+    fun uri ->
+      let transport =
+        Transport.Polling.create (make_uri uri) in
+      let socket =
+        { ready_state = Opening
+        ; transport = transport
+        ; sid = None
+        }
+      in
+      Lwt.(
+        Transport.Polling.open' transport >>= fun (transport, packets) ->
+        return ({ socket with transport = transport }, packets)
+      )
+
+  let write : t -> Packet.t list -> unit Lwt.t =
+    fun socket packets ->
+      Transport.Polling.write socket.transport packets
 
   let on_open socket packet_data =
     Lwt.(
@@ -396,22 +403,22 @@ module Socket = struct
              }
     )
 
+  let process_packet : Packet.t -> t -> t Lwt.t =
+    fun (packet_type, packet_data) socket ->
+      Lwt.(
+        match packet_type with
+        | Packet.OPEN -> on_open socket packet_data
+        | _ -> return socket
+      )
 
-  let process_packet (packet_type, packet_data) socket =
-    Lwt.(
-      match packet_type with
-      | Packet.OPEN -> on_open socket packet_data
-      | _ -> return socket
-    )
-
-  let with_connection : Uri.t -> (unit Lwt.t * (unit -> Packet.t Lwt.t) * (Packet.t -> unit Lwt.t)) Lwt.t =
-    fun uri ->
+  let with_connection : Uri.t -> ((unit -> Packet.t Lwt.t) -> (Packet.t -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t =
+    fun uri f ->
       (* packets to send via transport *)
       let (packets_send_stream, push_packet_send) = Lwt_stream.create () in
       (* packets received over transport *)
       let (packets_recv_stream, push_packet_recv) = Lwt_stream.create () in
-      let my_stream = Lwt_stream.clone packets_recv_stream in
       let recv () =
+        (* TODO: maybe just make the packet stream available instead of this recv function? *)
         Lwt.(
           Lwt_stream.get packets_recv_stream >>= function
           | None -> Lwt.fail_with "No packets in stream"
@@ -421,40 +428,31 @@ module Socket = struct
       let send packet =
         push_packet_send (Some packet); Lwt.return_unit
       in
-      let socket =
-        { ready_state = Opening
-        ; transport = Transport.Polling.create (make_uri uri)
-        ; sid = None
-        }
-      in
       Lwt.(
-        let open_conn socket =
-          Transport.Polling.open' socket.transport packets_send_stream push_packet_recv >>= fun transport ->
-          return { socket with transport = transport } >>= fun socket ->
+        let clone_process_packet packet socket =
+          (* Copy the packet to the user's packets_recv_stream, then process it. *)
+          push_packet_recv (Some packet); process_packet packet socket
+        in
+        let open_conn () =
+          open' uri >>= fun (socket, packets) ->
           Lwt_io.printl "waiting on my_stream (open_conn)..." >>= fun () ->
-          Lwt_stream.get my_stream >>= (function
-              | Some packet -> process_packet packet socket
-              | None -> return socket
-            )
+          Lwt_stream.fold_s clone_process_packet packets socket
         in
         let rec maintain_connection socket  =
           Lwt_unix.sleep 3.0 >>= fun () ->
-          Transport.Polling.write socket.transport [(Packet.PING, Packet.P_None)] >>= fun () ->
-          Transport.Polling.write socket.transport [(Packet.MESSAGE, Packet.P_String "hello")] >>= fun _ ->
-          Transport.Polling.do_poll socket.transport push_packet_recv >>= fun transport ->
-          return { socket with transport = transport } >>= fun socket ->
-          Lwt_io.printl "waiting on my_stream..." >>= fun () ->
-          Lwt_stream.get my_stream >>= (function
-              | Some packet -> process_packet packet socket
-              | None -> return socket
-            )
-          >>= fun socket ->
-          Lwt_io.printl "sleeping..." >>= fun () ->
-          (* Transport.Polling.do_poll push_packet_recv socket.transport >>= fun transport -> *)
+          write socket
+            ((Packet.PING, Packet.P_None)
+             :: Lwt_stream.get_available packets_send_stream)
+          >>= fun () ->
+          Transport.Polling.do_poll socket.transport >>= fun packets ->
+          Lwt_stream.fold_s clone_process_packet packets socket >>= fun socket ->
           maintain_connection socket
         in
-        open_conn socket >>= fun socket ->
-        return (maintain_connection socket, recv, send)
+        open_conn () >>= fun socket ->
+        pick
+          [ maintain_connection socket
+          ; f recv send
+          ]
       )
 end
 
@@ -472,13 +470,21 @@ let main () =
           ~path:"engine.io/"
           ()
       in
-      Socket.with_connection uri >>= fun (maintain_conn, recv, send) ->
-      Lwt.choose
-        (* [ maintain_conn *)
-        [ let rec loop () =
-            recv () >>= fun packet ->
-            Lwt_io.printl "user got a packet, thanks" >>= fun () ->
-            loop ()
-          in loop ()
-        ]
+      Socket.with_connection uri
+        (fun recv send ->
+           let rec loop i () =
+             if i > 2 then
+               return_unit
+             else
+               recv () >>= (function
+                   | (Packet.PONG, _) -> Lwt_io.printl "PONG!"
+                   | (packet_type, _) ->
+                     Lwt_io.printlf "user got a packet '%s', responding with a message."
+                       (Packet.string_of_packet_type packet_type)
+                     >>= fun () ->
+                     send (Packet.MESSAGE, Packet.P_String "hello there")
+                 )
+               >>= fun () ->
+               loop (i + 1) ()
+           in loop 0 ())
     )
