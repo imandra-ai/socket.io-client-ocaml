@@ -438,8 +438,6 @@ module Socket = struct
         | _ -> return socket
       )
 
-  let poll_interval = 2.0
-
   let with_connection :  Uri.t -> ((Packet.t Lwt_stream.t) -> (Packet.t -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t =
     fun uri f ->
       (* packets to send via transport *)
@@ -477,6 +475,7 @@ module Socket = struct
                  Lwt.return
                    { socket with
                      ping_sent_at = Some (Unix.time ())
+                   ; pong_received_at = None
                    }
                in
                match socket.ping_sent_at with
@@ -484,18 +483,12 @@ module Socket = struct
                  Lwt_io.printl "no ping_sent_at: send ping now" >>= fun () ->
                  return_ping ()
                | Some ping_sent_at ->
-                 let timeout_on_pong () =
-                   let seconds_since_last_ping = Unix.time () -. ping_sent_at in
-                   let ping_timeout_seconds = (float_of_int handshake.ping_timeout) /. 1000.0 in
-                   Lwt_unix.timeout (ping_timeout_seconds -. seconds_since_last_ping)
-                 in
                  (match socket.pong_received_at with
                   | None ->
                     (* We are waiting for PONG from server *)
-                    timeout_on_pong ()
-                  | Some pong_received_at when ping_sent_at > pong_received_at ->
-                    (* We are waiting for PONG from server *)
-                    timeout_on_pong ()
+                    let seconds_since_last_ping = Unix.time () -. ping_sent_at in
+                    let ping_timeout_seconds = (float_of_int handshake.ping_timeout) /. 1000.0 in
+                    Lwt_unix.timeout (ping_timeout_seconds -. seconds_since_last_ping)
                   | Some pong_received_at ->
                     (* All good, send a PING at the next interval. *)
                     let seconds_since_last_pong = Unix.time () -. pong_received_at in
