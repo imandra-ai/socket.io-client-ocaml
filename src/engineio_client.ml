@@ -281,26 +281,26 @@ module Transport = struct
 
     let process_response : Cohttp_lwt_unix.Response.t * Cohttp_lwt_body.t -> Packet.t Lwt_stream.t Lwt.t =
       fun (resp, body) ->
-      Lwt.(Cohttp.(Cohttp_lwt_unix.(
-          let code =
-            resp
-            |> Response.status
-            |> Code.code_of_status in
-          (* Lwt_io.printlf "Received status code: %i" code >>= fun () -> *)
-          if Code.is_success code then
-            Cohttp_lwt_body.to_stream body
-            |> Lwt_stream.map_list_s
-              (fun line ->
-                 (* Lwt_io.printlf "Got line:          '%s'" (String.escaped line) >>= fun () -> *)
-                 let packets = Parser.decode_payload_as_binary line in
-                 Lwt_list.iter_s log_packet packets >>= fun () ->
-                 return packets)
-            |> return
-          else
-            Cohttp_lwt_body.to_string body >>= fun body ->
-            Lwt_io.printl body >>= fun () ->
-            fail_with (Format.sprintf "bad response status: %i" code)
-        )))
+        Lwt.(Cohttp.(Cohttp_lwt_unix.(
+            let code =
+              resp
+              |> Response.status
+              |> Code.code_of_status in
+            (* Lwt_io.printlf "Received status code: %i" code >>= fun () -> *)
+            if Code.is_success code then
+              Cohttp_lwt_body.to_stream body
+              |> Lwt_stream.map_list_s
+                (fun line ->
+                   (* Lwt_io.printlf "Got line:          '%s'" (String.escaped line) >>= fun () -> *)
+                   let packets = Parser.decode_payload_as_binary line in
+                   Lwt_list.iter_s log_packet packets >>= fun () ->
+                   return packets)
+              |> return
+            else
+              Cohttp_lwt_body.to_string body >>= fun body ->
+              Lwt_io.printl body >>= fun () ->
+              fail_with (Format.sprintf "bad response status: %i" code)
+          )))
 
     let do_poll : t -> Packet.t Lwt_stream.t Lwt.t =
       fun t ->
@@ -310,9 +310,9 @@ module Transport = struct
               (* Lwt_io.printlf "GET '%s'" (Uri.to_string t.uri) >>= fun () -> *)
               catch
                 (fun () ->
-              Client.get
-                ~headers:(Header.init_with "accept" "application/json")
-                t.uri >>= process_response
+                   Client.get
+                     ~headers:(Header.init_with "accept" "application/json")
+                     t.uri >>= process_response
                 )
                 (function
                   | Failure msg ->
@@ -336,17 +336,17 @@ module Transport = struct
             >>= fun () ->
             catch
               (fun () ->
-            Client.post
-              ~headers:(Header.init_with "content-type" "application/octet-stream")
-              ~body:(encoded_payload |> Cohttp_lwt_body.of_string)
-              t.uri >>= fun (resp, body) ->
-            return_unit
+                 Client.post
+                   ~headers:(Header.init_with "content-type" "application/octet-stream")
+                   ~body:(encoded_payload |> Cohttp_lwt_body.of_string)
+                   t.uri >>= fun (resp, body) ->
+                 return_unit
               )
-                (function
-                  | Failure msg ->
-                    Lwt_io.printlf "Write failed: '%s'" msg >>= fun () ->
-                    return_unit
-                  | exn -> fail exn)
+              (function
+                | Failure msg ->
+                  Lwt_io.printlf "Write failed: '%s'" msg >>= fun () ->
+                  return_unit
+                | exn -> fail exn)
           )))
 
     let open' : t -> (t * Packet.t Lwt_stream.t) Lwt.t =
@@ -401,17 +401,17 @@ module Transport = struct
   (* TODO: allow different transports *)
 
   type t =
-  | Polling of Polling.t
+    | Polling of Polling.t
 
   let string_of_t = function
     | Polling _ -> "polling"
 
   let open' t =
     Lwt.(
-    match t with
-    | Polling polling ->
-      Polling.open' polling >>= fun (polling, packets) ->
-      return (Polling polling, packets)
+      match t with
+      | Polling polling ->
+        Polling.open' polling >>= fun (polling, packets) ->
+        return (Polling polling, packets)
     )
 
   let write t packets =
