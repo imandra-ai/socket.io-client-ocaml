@@ -17,7 +17,11 @@ server.on('connection', function(socket){
     });
     socket.on('message', function(data) {
         console.log(socket.id, 'message', arguments);
-        socket.send('thank you for your message, you sent: ' + data);
+        if (data === 'close') {
+            socket.close();
+        } else {
+            socket.send('thank you for your message, you sent: ' + data);
+        }
     });
     socket.on('close', function() {
         console.log(socket.id, 'close', arguments);
