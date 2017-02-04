@@ -427,7 +427,7 @@ module Socket = struct
         | _ -> return socket
       )
 
-  let with_connection :  Uri.t -> ((Packet.t Lwt_stream.t) -> (Packet.t -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t =
+  let with_connection :  Uri.t -> ((Packet.t Lwt_stream.t) -> (string -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t =
     fun uri f ->
       (* packets to send via transport *)
       let (packets_send_stream, push_packet_send) = Lwt_stream.create () in
@@ -530,8 +530,11 @@ module Socket = struct
         pick
           [ maintain_connection (poll_once socket) socket
           ; finalize
-              (fun () -> f (Lwt_stream.clone packets_recv_stream) send)
-              (fun () -> write socket [(Packet.CLOSE, Packet.P_None)])
+              (fun () ->
+                 f (Lwt_stream.clone packets_recv_stream)
+                   (fun data -> send (Packet.MESSAGE, Packet.P_String data)))
+              (fun () ->
+                 write socket [(Packet.CLOSE, Packet.P_None)])
           ]
       )
 end
@@ -551,7 +554,7 @@ let main () =
           ()
       in
       Socket.with_connection uri
-        (fun packets send_packet ->
+        (fun packets send ->
            let react = function
              | Some (packet_type, _) ->
                Lwt_io.printlf "-- User got a packet '%s'!"
@@ -567,10 +570,8 @@ let main () =
              Lwt_io.(read_line_opt stdin) >>= function
              | None ->
                Lwt.return_unit
-             | Some "q" ->
-               send_packet (Packet.CLOSE, Packet.P_None) >>= sendline
              | Some content ->
-               send_packet (Packet.MESSAGE, Packet.P_String content) >>= sendline
+               send content >>= sendline
            in
            sendline () <?> react_forever ())
     )
