@@ -458,74 +458,91 @@ module Socket = struct
             (* TODO: check we got an sid in the first set of packets. *)
             (* TODO: we are processing these packets twice. *)
         in
-        let rec poll_forever socket =
+        let poll_once socket =
           Lwt_io.printl "polling..." >>= fun () ->
           Transport.Polling.do_poll socket.transport >>= fun packets ->
-          Lwt_stream.iter (fun packet -> push_packet_recv (Some packet)) packets >>= fun () ->
-          poll_forever socket
+          Lwt_stream.iter (fun packet -> push_packet_recv (Some packet)) packets
         in
-        let rec maintain_connection socket  =
+        let maybe_send_ping socket =
+          let should_ping =
+            match socket.handshake with
+            | None -> false (* Not connected. *)
+            | Some handshake ->
+              (match socket.ping_sent_at, socket.pong_received_at with
+               | None, _ -> true (* No ping sent yet. *)
+               | Some _, None -> false (* Ping sent, waiting for pong. *)
+               | _, Some pong_received_at ->
+                 let seconds_since_last_pong = Unix.time () -. pong_received_at in
+                 let ping_interval_seconds = (float_of_int handshake.ping_interval) /. 1000.0 in
+                 seconds_since_last_pong >= ping_interval_seconds)
+          in
+          if should_ping then
+            send (Packet.PING, Packet.P_None) >>= fun () ->
+            return
+              { socket with
+                ping_sent_at = Some (Unix.time ())
+              ; pong_received_at = None
+              }
+          else
+            return socket
+        in
+        let rec maintain_connection poll_promise socket  =
+          let poll_promise =
+            if is_sleeping poll_promise then
+              poll_promise
+            else
+              poll_once socket
+          in
           match socket.handshake with
           | None -> Lwt.fail_with "maintain_connection: socket not open"
           | Some handshake ->
             (
-             let sleep_until_ping () =
-               let return_ping () =
-                 push_packet_send (Some (Packet.PING, Packet.P_None));
-                 Lwt.return
-                   { socket with
-                     ping_sent_at = Some (Unix.time ())
-                   ; pong_received_at = None
-                   }
-               in
-               match socket.ping_sent_at with
-               | None ->
-                 Lwt_io.printl "no ping_sent_at: send ping now" >>= fun () ->
-                 return_ping ()
-               | Some ping_sent_at ->
-                 (match socket.pong_received_at with
-                  | None ->
-                    (* We are waiting for PONG from server *)
-                    let seconds_since_last_ping = Unix.time () -. ping_sent_at in
-                    let ping_timeout_seconds = (float_of_int handshake.ping_timeout) /. 1000.0 in
-                    Lwt_unix.timeout (ping_timeout_seconds -. seconds_since_last_ping)
-                  | Some pong_received_at ->
-                    (* All good, send a PING at the next interval. *)
-                    let seconds_since_last_pong = Unix.time () -. pong_received_at in
-                    let ping_interval_seconds = (float_of_int handshake.ping_interval) /. 1000.0 in
-                    Lwt_unix.sleep (ping_interval_seconds -. seconds_since_last_pong) >>= fun () ->
-                    Lwt_io.printl "sleep_until_ping" >>= fun () ->
-                    return_ping ()
-                 )
-             in
-             let sleep_until_packet_to_send () =
-               Lwt_stream.peek packets_send_stream >>= fun _ ->
-               Lwt_io.printl "sleep_until_packet_to_send" >>= fun () ->
-               return socket
-             in
-             let sleep_until_packet_received () =
-               Lwt_stream.peek packets_recv_stream >>= fun _ ->
-               Lwt_io.printl "sleep_until_packet_received" >>= fun () ->
-               return socket
-             in
-             pick
-               (* TODO: how to ensure none of these are dropped if >1 returns at once? *)
-               [ sleep_until_ping ()
-               ; sleep_until_packet_to_send ()
-               ; sleep_until_packet_received ()
-               ]
-             >>= fun socket ->
-             (* TODO: how do we propagate updates to the socket state to the poll_forever thread? *)
-             Lwt_list.fold_left_s process_packet socket (Lwt_stream.get_available packets_recv_stream) >>= fun socket ->
-             write socket (Lwt_stream.get_available packets_send_stream) >>= fun () ->
-             return socket)
-            >>= maintain_connection
+              let sleep_until_ping () =
+                match socket.ping_sent_at, socket.pong_received_at with
+                | None, _ ->
+                  Lwt_io.printl "no ping_sent_at: send ping now"
+                | Some ping_sent_at, None ->
+                  (* We are waiting for PONG from server. Raise Timeout if we don't get it in time. *)
+                  let seconds_since_last_ping = Unix.time () -. ping_sent_at in
+                  let ping_timeout_seconds = (float_of_int handshake.ping_timeout) /. 1000.0 in
+                  Lwt_unix.timeout (ping_timeout_seconds -. seconds_since_last_ping)
+                | _, Some pong_received_at ->
+                  (* All good, send a PING at the next interval. *)
+                  let seconds_since_last_pong = Unix.time () -. pong_received_at in
+                  let ping_interval_seconds = (float_of_int handshake.ping_interval) /. 1000.0 in
+                  Lwt_unix.sleep (ping_interval_seconds -. seconds_since_last_pong) >>= fun () ->
+                  Lwt_io.printl "sleep_until_ping"
+              in
+              let sleep_until_packet_to_send () =
+                Lwt_stream.peek packets_send_stream >>= fun _ ->
+                Lwt_io.printl "sleep_until_packet_to_send"
+              in
+              let sleep_promises =
+                pick
+                  [ sleep_until_ping ()
+                  ; sleep_until_packet_to_send ()
+                  ]
+              in
+              choose
+                [ poll_promise
+                ; sleep_promises
+                ] >>= fun () ->
+              let () = cancel sleep_promises in
+              maybe_send_ping socket >>= fun socket ->
+              Lwt_list.fold_left_s
+                process_packet
+                socket
+                (Lwt_stream.get_available packets_recv_stream) >>= fun socket ->
+              write socket (Lwt_stream.get_available packets_send_stream) >>= fun () ->
+              maintain_connection poll_promise socket
+            )
         in
         open_conn () >>= fun socket ->
         pick
-          [ poll_forever socket
-          ; maintain_connection socket
-          ; f (Lwt_stream.clone packets_recv_stream) send
+          [ maintain_connection (poll_once socket) socket
+          ; finalize
+              (fun () -> f (Lwt_stream.clone packets_recv_stream) send)
+              (fun () -> write socket [(Packet.CLOSE, Packet.P_None)])
           ]
       )
 end
