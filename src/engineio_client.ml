@@ -187,7 +187,7 @@ module Transport = struct
 
     let log_packet (packet_type, packet_data) =
       Lwt.(
-        Lwt_io.printlf "decoded packet: %s data: '%s'"
+        Lwt_io.printlf "decoded packet: '%s' data: '%s'"
           (Packet.string_of_packet_type packet_type)
           (match packet_data with
            | Packet.P_None -> "no data"
@@ -237,7 +237,7 @@ module Transport = struct
         Lwt.(
           let t = { t with polling = true } in
           Cohttp.(Cohttp_lwt_unix.(
-              Lwt_io.printlf "Sending GET request %s" (Uri.to_string t.uri) >>= fun () ->
+              (* Lwt_io.printlf "GET '%s'" (Uri.to_string t.uri) >>= fun () -> *)
               Client.get
                 ~headers:(Header.init_with "accept" "application/json")
                 t.uri >>= process_response
@@ -256,26 +256,15 @@ module Transport = struct
                   |> List.map Parser.encode_packet
                   |> String.concat ""
                 in
-                Lwt_io.printlf "Sending POST request to '%s' with data '%s'"
+                Lwt_io.printlf "POST '%s' with data '%s'"
                   (Uri.to_string t.uri)
                   (encoded_payload |> String.escaped)
                 >>= fun () ->
-                let body =
-                  encoded_payload
-                  |> Cohttp_lwt_body.of_string
-                in
-                catch
-                  (fun () ->
-                     Client.post
-                       ~headers:(Header.init_with "content-type" "application/octet-stream")
-                       ~body:body
-                       t.uri >>= fun (resp, body) ->
-                     return_unit)
-                  (fun exn ->
-                     match exn with
-                     | Failure "Client connection was closed" -> return_unit
-                     | exn -> fail exn
-                  )
+                Client.post
+                  ~headers:(Header.init_with "content-type" "application/octet-stream")
+                  ~body:(encoded_payload |> Cohttp_lwt_body.of_string)
+                  t.uri >>= fun (resp, body) ->
+                return_unit
               ))
         )
 
@@ -571,12 +560,15 @@ let main () =
                Lwt_io.printl "End of packet stream?" >>= fun () ->
                Lwt.fail Exit
            in
-           let rec react_forever () = Lwt_stream.get packets >>= react >>= react_forever
+           let rec react_forever () =
+             Lwt_stream.get packets >>= react >>= react_forever
            in
            let rec sendline () =
              Lwt_io.(read_line_opt stdin) >>= function
              | None ->
                Lwt.return_unit
+             | Some "q" ->
+               send_packet (Packet.CLOSE, Packet.P_None) >>= sendline
              | Some content ->
                send_packet (Packet.MESSAGE, Packet.P_String content) >>= sendline
            in
