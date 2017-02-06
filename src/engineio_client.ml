@@ -585,24 +585,27 @@ module Socket = struct
 
   let probe : t -> Transport.t option Lwt.t =
     fun socket ->
-      let open Transport.WebSocket in
-      create socket.uri
-      |> open' >>= fun websocket ->
-      Lwt_log.notice ~section "Probing websocket transport..." >>= fun () ->
-      write websocket [(Packet.PING, Packet.P_String "probe")] >>= fun () ->
-      receive websocket >>= fun packets ->
-      match packets with
-      | [(Packet.PONG, Packet.P_String "probe")] ->
-        Lwt_log.notice ~section "Ok to upgrade." >>= fun () ->
-        write websocket [(Packet.UPGRADE, Packet.P_None)] >>= fun () ->
-        Lwt.return (Some (Transport.WebSocket websocket))
-      | (packet_type, packet_data) :: _ ->
-        Lwt_log.error_f ~section "Can not upgrade. Expecting PONG, but got '%s'."
-          (Packet.string_of_packet_type packet_type) >>= fun () ->
-        Lwt.return_none
-      | [] ->
-        Lwt_log.error ~section "Can not upgrade. Expecting PONG, but didn't get a Packet." >>= fun () ->
-        Lwt.return_none
+      match socket.handshake with
+      | Some handshake when List.exists ((=) Transport.WebSocket.name) Parser.(handshake.upgrades) ->
+        let open Transport.WebSocket in
+        create socket.uri
+        |> open' >>= fun websocket ->
+        Lwt_log.notice ~section "Probing websocket transport..." >>= fun () ->
+        write websocket [(Packet.PING, Packet.P_String "probe")] >>= fun () ->
+        receive websocket >>= fun packets ->
+        (match packets with
+         | [(Packet.PONG, Packet.P_String "probe")] ->
+           Lwt_log.notice ~section "Ok to upgrade." >>= fun () ->
+           write websocket [(Packet.UPGRADE, Packet.P_None)] >>= fun () ->
+           Lwt.return (Some (Transport.WebSocket websocket))
+         | (packet_type, packet_data) :: _ ->
+           Lwt_log.error_f ~section "Can not upgrade. Expecting PONG, but got '%s'."
+             (Packet.string_of_packet_type packet_type) >>= fun () ->
+           Lwt.return_none
+         | [] ->
+           Lwt_log.error ~section "Can not upgrade. Expecting PONG, but didn't get a Packet." >>= fun () ->
+           Lwt.return_none)
+      | _ -> Lwt.return_none
 
   let on_open socket packet_data =
     let handshake = Parser.parse_handshake packet_data in
