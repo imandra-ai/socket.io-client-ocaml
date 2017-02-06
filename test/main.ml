@@ -22,16 +22,17 @@ let () =
         in
         Socket.with_connection uri
           (fun packets send ->
-             let react = function
+             let rec react_forever () =
+               Lwt_stream.get packets >>= function
                | Some (packet_type, _) ->
                  Lwt_io.printlf "-- User got a packet %s!"
-                   (Packet.string_of_packet_type packet_type |> String.uppercase_ascii)
+                   (Packet.string_of_packet_type packet_type |> String.uppercase_ascii) >>= fun () ->
+                 (match packet_type with
+                  | Packet.CLOSE -> Lwt.return_unit
+                  | _ -> react_forever ())
                | None ->
                  Lwt_io.printl "End of packet stream?" >>= fun () ->
                  Lwt.fail Exit
-             in
-             let rec react_forever () =
-               Lwt_stream.get packets >>= react >>= react_forever
              in
              let rec sendline () =
                Lwt_io.print "> " >>= fun () ->
