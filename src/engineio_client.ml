@@ -800,9 +800,11 @@ module Socket = struct
             Lwt.pick
               (List.concat
                  [ (* If we're connected, wake up for pings. *)
-                   socket.handshake
-                   |> Util.Option.map ~f:(sleep_until_ping socket)
-                   |> Util.Option.to_list
+                   (match socket.ready_state, socket.handshake with
+                    | Closing, _
+                    | Closed, _
+                    | _, None -> []
+                    | _, Some handshake -> [sleep_until_ping socket handshake])
                  ; [ sleep_until_packet_received ()
                    ; sleep_until_packet_to_send ()
                    ]
