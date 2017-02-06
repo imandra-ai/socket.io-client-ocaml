@@ -291,8 +291,26 @@ module Parser = struct
 end
 
 module Transport = struct
+  let log_receive_packets : section:Lwt_log.section -> Packet.t list -> unit Lwt.t =
+    fun ~section packets ->
+      Lwt_log.info_f ~section "receive packets [%s]"
+        (packets
+         |> List.map fst
+         |> List.map Packet.string_of_packet_type
+         |> List.map String.uppercase_ascii
+         |> String.concat ", ")
+
+  let log_write_packets : section:Lwt_log.section -> Packet.t list -> unit Lwt.t =
+    fun ~section packets ->
+      Lwt_log.info_f ~section "write packets [%s]"
+        (packets
+         |> List.map fst
+         |> List.map Packet.string_of_packet_type
+         |> List.map String.uppercase_ascii
+         |> String.concat ", ")
+
   module Polling = struct
-    let section : Lwt_log_core.section =
+    let section : Lwt_log.section =
       Lwt_log.Section.make "eio.transport.polling"
 
     type t =
@@ -311,7 +329,7 @@ module Transport = struct
 
     let log_packet : Packet.packet_type * Packet.packet_data -> unit Lwt.t =
       fun (packet_type, packet_data) ->
-        Lwt_log.debug_f ~section "decoded packet %s with data: '%s'"
+        Lwt_log.debug_f ~section "Decoded packet %s with data: '%s'"
           (Packet.string_of_packet_type packet_type |> String.uppercase_ascii)
           (match packet_data with
            | Packet.P_None -> "no data"
@@ -320,7 +338,7 @@ module Transport = struct
 
     let process_response : Cohttp_lwt_unix.Response.t * Cohttp_lwt_body.t -> Packet.t list Lwt.t =
       fun (resp, body) ->
-        Lwt.(Cohttp.(Cohttp_lwt_unix.(
+        Cohttp.(Cohttp_lwt_unix.(
             let code =
               resp
               |> Response.status
@@ -330,19 +348,21 @@ module Transport = struct
               Cohttp_lwt_body.to_string_list body
               >>= Lwt_list.map_s
                 (fun line ->
-                   Lwt_log.debug_f ~section "Got line:          '%s'" (String.escaped line) >>= fun () ->
+                   Lwt_log.debug_f ~section "Got body line: '%s'" (String.escaped line) >>= fun () ->
                    let packets = Parser.decode_payload_as_binary line in
                    Lwt_list.iter_s log_packet packets >>= fun () ->
-                   return packets)
+                   Lwt.return packets)
               >>= fun packets_list ->
-              return (List.concat packets_list)
+              let packets = List.concat packets_list in
+              log_receive_packets ~section packets >>= fun () ->
+              Lwt.return packets
             else
               Cohttp_lwt_body.to_string body >>= fun body ->
               Lwt_log.error_f ~section "%s" body >>= fun () ->
-              fail_with (Format.sprintf "bad response status: %i" code)
-          )))
+              Lwt.fail_with (Format.sprintf "Bad response status: %i" code)
+          ))
 
-    let do_poll : t -> Packet.t list Lwt.t =
+    let receive : t -> Packet.t list Lwt.t =
       fun t ->
         Lwt.(
           Cohttp.(Cohttp_lwt_unix.(
@@ -367,6 +387,7 @@ module Transport = struct
             let encoded_payload =
               Parser.encode_payload packets
             in
+            log_write_packets ~section packets >>= fun () ->
             Lwt_log.debug_f ~section "POST '%s' with data '%s'"
               (Uri.to_string t.uri)
               (encoded_payload |> String.escaped)
@@ -455,6 +476,7 @@ module Transport = struct
         | None ->
           Lwt_log.info ~section "Write attempt with no connection."
         | Some (recv, send) ->
+          log_write_packets ~section packets >>= fun () ->
           packets
           |> Lwt_list.iter_s
             (fun packet ->
@@ -498,7 +520,10 @@ module Transport = struct
             )
           in
           Lwt.catch
-            (fun () -> recv () >>= react)
+            (fun () -> recv () >>= react >>= fun packets ->
+              log_receive_packets ~section packets >>= fun () ->
+              Lwt.return packets
+            )
             (fun exn -> Lwt_log.error_f ~section "receive" >>= fun () -> Lwt.fail exn)
 
     let on_close : t -> t =
@@ -564,7 +589,7 @@ module Transport = struct
   let receive : t -> Packet.t list Lwt.t =
     function
     | Polling polling ->
-      Polling.do_poll polling
+      Polling.receive polling
     | WebSocket websocket ->
       WebSocket.receive websocket
 
