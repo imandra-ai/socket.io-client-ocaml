@@ -1,3 +1,11 @@
+Lwt_log.default :=
+  Lwt_log.channel
+    ~template:"$(date).$(milliseconds) [$(section)] $(level): $(message)"
+    ~close_mode:`Close
+    ~channel:Lwt_io.stdout ()
+
+let () = Lwt_log.add_rule "*" Lwt_log.Debug
+
 let () =
   Lwt_main.run
     Lwt.(Engineio_client.(
