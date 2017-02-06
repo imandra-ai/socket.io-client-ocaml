@@ -3,13 +3,11 @@ open Lwt.Infix
 type ready_state =
   | Opening
   | Open
-  | Closing (* TODO: do we need the Closing state? *)
   | Closed
 
 let string_of_ready_state = function
   | Opening -> "Opening"
   | Open -> "Open"
-  | Closing -> "Closing"
   | Closed -> "Closed"
 
 module Util = struct
@@ -442,7 +440,6 @@ module Transport = struct
     let receive : t -> Packet.t list Lwt.t =
       fun t ->
       match (t.ready_state, t.connection) with
-      | Closing, _
       | Closed, _
       | _, None ->
         Lwt_log.info ~section "Receive attempt with no connection." >>= fun () ->
@@ -667,7 +664,6 @@ module Socket = struct
   let close : t -> t Lwt.t =
     fun socket ->
       match socket.ready_state with
-      | Closing
       | Closed -> Lwt.return socket
       | _ ->
         Transport.close socket.transport >>= fun transport ->
@@ -739,7 +735,6 @@ module Socket = struct
       let maybe_send_ping socket =
         let should_ping =
           match socket.ready_state, socket.handshake with
-          | Closing, _
           | Closed, _ -> false
           | _, None -> false (* Not connected. *)
           | _, Some handshake ->
@@ -787,7 +782,6 @@ module Socket = struct
               (List.concat
                  [ (* If we're connected, wake up for pings. *)
                    (match socket.ready_state, socket.handshake with
-                    | Closing, _
                     | Closed, _
                     | _, None -> []
                     | _, Some handshake -> [sleep_until_ping socket handshake])
