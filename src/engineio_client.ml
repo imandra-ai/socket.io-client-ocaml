@@ -468,8 +468,12 @@ module Transport = struct
             | Opcode.Pong ->
               Lwt.return_nil
             | Opcode.Close ->
-              (* TODO: propagate close event *)
-              Lwt.return_nil
+              (* Translate Websocket Close frame into an Engine.io Close packet. *)
+              Lwt.return
+                [( Packet.CLOSE
+                 , Packet.P_Binary
+                     (frame.content |> Stringext.to_list |> List.map Char.code)
+                 )]
             | _ ->
               Lwt_log.error_f ~section "Unexpected frame %s"
                 (Frame.show frame) >>= fun () ->
