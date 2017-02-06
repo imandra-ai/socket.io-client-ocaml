@@ -5,44 +5,55 @@ type ready_state =
   | Open
   | Closed
 
-let string_of_ready_state = function
+let string_of_ready_state : ready_state -> string =
+  function
   | Opening -> "Opening"
   | Open -> "Open"
   | Closed -> "Closed"
 
 module Util = struct
-  let const x _ = x
-  let flip f a b = f b a
+  let const : 'a -> 'b -> 'a =
+    fun x _ -> x
+
+  let flip : ('a -> 'b -> 'c) -> 'b -> 'a -> 'c =
+    fun f a b -> f b a
 
   module List = struct
-    let split_at index list =
-      if index <= 0 then
-        ([], list)
-      else
-        let rec loop i t accum =
-          if i = 0 then
-            (List.rev accum, t)
-          else
-            match t with
-            | [] -> (list, [])
-            | hd :: tl -> loop (i - 1) tl (hd :: accum)
-        in
-        loop index list []
+    let split_at : int -> 'a list -> 'a list * 'a list =
+      fun index list ->
+        if index <= 0 then
+          ([], list)
+        else
+          let rec loop i t accum =
+            if i = 0 then
+              (List.rev accum, t)
+            else
+              match t with
+              | [] -> (list, [])
+              | hd :: tl -> loop (i - 1) tl (hd :: accum)
+          in
+          loop index list []
   end
 
   module Option = struct
-    let map ~f = function
-      | Some x -> Some (f x)
-      | None -> None
+    let map : f:('a -> 'b) -> 'a option -> 'b option =
+      fun ~f ->
+        function
+        | Some x -> Some (f x)
+        | None -> None
 
-    let value ~default = function
-      | Some x -> x
-      | None -> default
+    let value : default:'a -> 'a option -> 'a =
+      fun ~default ->
+        function
+        | Some x -> x
+        | None -> default
 
-    let value_map ~f ~default t =
-      map ~f t |> value ~default
+    let value_map : f:('a -> 'b) -> default:'b -> 'a option -> 'b =
+      fun ~f ~default t ->
+        map ~f t |> value ~default
 
-    let to_list = function
+    let to_list : 'a option -> 'a list =
+      function
       | Some x -> [x]
       | None -> []
   end
@@ -114,23 +125,24 @@ end
 
 module Parser = struct
 
-  let protocol = 3
+  let protocol : int = 3
 
   (* See https://github.com/socketio/engine.io-protocol#encoding *)
 
-  let decode_packet (is_string : bool) (codes : int list) : Packet.t =
-    match codes with
-    | i :: rest ->
-      ( i |> Char.chr |> Stringext.of_char |> int_of_string |> Packet.packet_type_of_int
-      , if is_string then
-          Packet.P_String
-            (List.map Char.chr rest
-             |> Stringext.of_list)
-        else
-          Packet.P_Binary rest
-      )
-    | [] ->
-      (Packet.ERROR, Packet.P_String "Empty packet")
+  let decode_packet : bool -> int list -> Packet.t =
+    fun is_string codes ->
+      match codes with
+      | i :: rest ->
+        ( i |> Char.chr |> Stringext.of_char |> int_of_string |> Packet.packet_type_of_int
+        , if is_string then
+            Packet.P_String
+              (List.map Char.chr rest
+               |> Stringext.of_list)
+          else
+            Packet.P_Binary rest
+        )
+      | [] ->
+        (Packet.ERROR, Packet.P_String "Empty packet")
 
   let decode_packet_string : string -> Packet.t =
     fun input ->
@@ -227,12 +239,13 @@ module Parser = struct
     ; upgrades : string list
     }
 
-  let string_of_handshake handshake =
-    Format.sprintf
-      "sid: '%s' ping_interval: %i ping_timeout: %i"
-      handshake.sid
-      handshake.ping_interval
-      handshake.ping_timeout
+  let string_of_handshake : handshake -> string =
+    fun handshake ->
+      Format.sprintf
+        "sid: '%s' ping_interval: %i ping_timeout: %i"
+        handshake.sid
+        handshake.ping_interval
+        handshake.ping_timeout
 
   let parse_handshake : Packet.packet_data -> handshake =
     fun packet_data ->
@@ -279,28 +292,31 @@ end
 
 module Transport = struct
   module Polling = struct
-    let section = Lwt_log.Section.make "eio.transport.polling"
+    let section : Lwt_log_core.section =
+      Lwt_log.Section.make "eio.transport.polling"
 
     type t =
       { ready_state : ready_state
       ; uri : Uri.t
       }
 
-    let name = "polling"
+    let name : string = "polling"
 
-    let create uri =
-      { ready_state = Closed
-      ; uri =
-          Uri.add_query_param uri ("transport", [name])
-      }
+    let create : Uri.t -> t =
+      fun uri ->
+        { ready_state = Closed
+        ; uri =
+            Uri.add_query_param uri ("transport", [name])
+        }
 
-    let log_packet (packet_type, packet_data) =
-      Lwt_log.debug_f ~section "decoded packet %s with data: '%s'"
-        (Packet.string_of_packet_type packet_type |> String.uppercase_ascii)
-        (match packet_data with
-         | Packet.P_None -> "no data"
-         | Packet.P_String string -> string
-         | Packet.P_Binary codes -> Format.sprintf "binary packet_data of length %i" (List.length codes))
+    let log_packet : Packet.packet_type * Packet.packet_data -> unit Lwt.t =
+      fun (packet_type, packet_data) ->
+        Lwt_log.debug_f ~section "decoded packet %s with data: '%s'"
+          (Packet.string_of_packet_type packet_type |> String.uppercase_ascii)
+          (match packet_data with
+           | Packet.P_None -> "no data"
+           | Packet.P_String string -> string
+           | Packet.P_Binary codes -> Format.sprintf "binary packet_data of length %i" (List.length codes))
 
     let process_response : Cohttp_lwt_unix.Response.t * Cohttp_lwt_body.t -> Packet.t list Lwt.t =
       fun (resp, body) ->
@@ -370,30 +386,34 @@ module Transport = struct
                 | exn -> fail exn)
           )))
 
-    let on_open t handshake =
-      { ready_state = Open
-      ; uri =
-          t.uri
-          |> (Util.flip Uri.remove_query_param) "sid"
-          |> (Util.flip Uri.add_query_param) ("sid", [Parser.(handshake.sid)])
-      }
+    let on_open : t -> Parser.handshake -> t =
+      fun t handshake ->
+        { ready_state = Open
+        ; uri =
+            t.uri
+            |> (Util.flip Uri.remove_query_param) "sid"
+            |> (Util.flip Uri.add_query_param) ("sid", [Parser.(handshake.sid)])
+        }
 
-    let on_close t =
-      { ready_state = Closed
-      ; uri =
-          t.uri
-          |> (Util.flip Uri.remove_query_param) "sid"
-      }
+    let on_close : t -> t =
+      fun t ->
+        { ready_state = Closed
+        ; uri =
+            t.uri
+            |> (Util.flip Uri.remove_query_param) "sid"
+        }
 
-    let close t =
-      write t [(Packet.CLOSE, Packet.P_None)] >>= fun () ->
-      Lwt.return (on_close t)
+    let close : t -> t Lwt.t =
+      fun t ->
+        write t [(Packet.CLOSE, Packet.P_None)] >>= fun () ->
+        Lwt.return (on_close t)
   end
 
   module WebSocket = struct
     open Websocket_lwt
 
-    let section = Lwt_log.Section.make "eio.transport.websocket"
+    let section : Lwt_log_core.section =
+      Lwt_log.Section.make "eio.transport.websocket"
 
     type t =
       { ready_state : ready_state
@@ -401,41 +421,44 @@ module Transport = struct
       ; connection : ((unit -> Frame.t Lwt.t) * (Frame.t -> unit Lwt.t)) option
       }
 
-    let name = "websocket"
+    let name : string = "websocket"
 
-    let create uri =
-      { ready_state = Closed
-      ; uri =
-          Uri.add_query_param uri ("transport", [name])
-      ; connection = None
-      }
-
-    let open' t =
-      Resolver_lwt.resolve_uri ~uri:t.uri Resolver_lwt_unix.system >>= fun endp ->
-      Conduit_lwt_unix.(
-        endp_to_client ~ctx:default_ctx endp >>= fun client ->
-        Websocket_lwt.with_connection ~ctx:default_ctx client t.uri
-      ) >>= fun (recv, send) ->
-      Lwt.return
-        { t with
-          ready_state = Open
-        ; connection = Some (recv, send)
+    let create : Uri.t -> t =
+      fun uri ->
+        { ready_state = Closed
+        ; uri =
+            Uri.add_query_param uri ("transport", [name])
+        ; connection = None
         }
+
+    let open_ : t -> t Lwt.t =
+      fun t ->
+        Resolver_lwt.resolve_uri ~uri:t.uri Resolver_lwt_unix.system >>= fun endp ->
+        Conduit_lwt_unix.(
+          endp_to_client ~ctx:default_ctx endp >>= fun client ->
+          Websocket_lwt.with_connection ~ctx:default_ctx client t.uri
+        ) >>= fun (recv, send) ->
+        Lwt.return
+          { t with
+            ready_state = Open
+          ; connection = Some (recv, send)
+          }
 
     (* Socket should already be open - we only get a websocket transport via an
        upgrade. *)
-    let on_open t handshake =
-      t
+    let on_open : t -> Parser.handshake -> t =
+      fun t handshake -> t
 
-    let write t packets =
-      match t.connection with
-      | None ->
-        Lwt_log.info ~section "Write attempt with no connection."
-      | Some (recv, send) ->
-        packets
-        |> Lwt_list.iter_s
-          (fun packet ->
-             send (Frame.create ~content:(Parser.encode_packet packet) ()))
+    let write : t -> Packet.t list -> unit Lwt.t =
+      fun t packets ->
+        match t.connection with
+        | None ->
+          Lwt_log.info ~section "Write attempt with no connection."
+        | Some (recv, send) ->
+          packets
+          |> Lwt_list.iter_s
+            (fun packet ->
+               send (Frame.create ~content:(Parser.encode_packet packet) ()))
 
     let receive : t -> Packet.t list Lwt.t =
       fun t ->
@@ -478,54 +501,61 @@ module Transport = struct
             (fun () -> recv () >>= react)
             (fun exn -> Lwt_log.error_f ~section "receive" >>= fun () -> Lwt.fail exn)
 
-    let on_close t =
-      { ready_state = Closed
-      ; connection = None
-      ; uri =
-          t.uri
-          |> (Util.flip Uri.remove_query_param) "sid"
-      }
+    let on_close : t -> t =
+      fun t ->
+        { ready_state = Closed
+        ; connection = None
+        ; uri =
+            t.uri
+            |> (Util.flip Uri.remove_query_param) "sid"
+        }
 
-    let close t =
-      match t.connection with
-      | None ->
-        Lwt_log.info ~section "Close attempt with no connection." >>= fun () ->
-        Lwt.return (on_close t)
-      | Some (recv, send) ->
-        send (Frame.close 1000) >>= fun () ->
-        Lwt.return (on_close t)
+    let close : t -> t Lwt.t =
+      fun t ->
+        match t.connection with
+        | None ->
+          Lwt_log.info ~section "Close attempt with no connection." >>= fun () ->
+          Lwt.return (on_close t)
+        | Some (recv, send) ->
+          send (Frame.close 1000) >>= fun () ->
+          Lwt.return (on_close t)
   end
 
   type t =
     | Polling of Polling.t
     | WebSocket of WebSocket.t
 
-  let string_of_t = function
+  let string_of_t : t -> string =
+    function
     | Polling _ -> Polling.name
     | WebSocket _ -> WebSocket.name
 
-  let create_polling uri =
-    Polling (Polling.create uri)
+  let create_polling : Uri.t -> t =
+    fun uri ->
+      Polling (Polling.create uri)
 
-  let create_websocket uri =
-    WebSocket (WebSocket.create uri)
+  let create_websocket : Uri.t -> t =
+    fun uri ->
+      WebSocket (WebSocket.create uri)
 
-  let write t packets =
-    match t with
-    | Polling polling ->
-      Polling.write polling packets
-    | WebSocket websocket ->
-      WebSocket.write websocket packets
+  let write : t -> Packet.t list -> unit Lwt.t =
+    fun t packets ->
+      match t with
+      | Polling polling ->
+        Polling.write polling packets
+      | WebSocket websocket ->
+        WebSocket.write websocket packets
 
-  let on_open t handshake =
-    match t with
-    | Polling polling ->
-      Polling (Polling.on_open polling handshake)
-    | WebSocket websocket ->
-      WebSocket (WebSocket.on_open websocket handshake)
+  let on_open : t -> Parser.handshake -> t =
+    fun t handshake ->
+      match t with
+      | Polling polling ->
+        Polling (Polling.on_open polling handshake)
+      | WebSocket websocket ->
+        WebSocket (WebSocket.on_open websocket handshake)
 
-  let on_close t =
-    match t with
+  let on_close : t -> t =
+    function
     | Polling polling ->
       Polling (Polling.on_close polling)
     | WebSocket websocket ->
@@ -538,8 +568,8 @@ module Transport = struct
     | WebSocket websocket ->
       WebSocket.receive websocket
 
-  let close t =
-    match t with
+  let close : t -> t Lwt.t =
+    function
     | Polling polling ->
       Polling.close polling >>= fun polling ->
       Lwt.return (Polling polling)
@@ -560,19 +590,19 @@ module Socket = struct
     ; uri : Uri.t
     }
 
-  let make_uri uri =
-    Uri.with_query uri [("EIO", [string_of_int Parser.protocol])]
-
-  let create uri =
-    let uri = make_uri uri in
-    { ready_state = Opening
-    ; transport =
-        Transport.create_polling uri
-    ; handshake = None
-    ; ping_sent_at = None
-    ; pong_received_at = None
-    ; uri = uri
-    }
+  let create : Uri.t -> t =
+    fun uri ->
+      let uri =
+        Uri.with_query uri [("EIO", [string_of_int Parser.protocol])]
+      in
+      { ready_state = Opening
+      ; transport =
+          Transport.create_polling uri
+      ; handshake = None
+      ; ping_sent_at = None
+      ; pong_received_at = None
+      ; uri = uri
+      }
 
   let write : t -> Packet.t list -> unit Lwt.t =
     fun socket packets ->
@@ -587,7 +617,7 @@ module Socket = struct
       | Some handshake when List.exists ((=) Transport.WebSocket.name) Parser.(handshake.upgrades) ->
         let open Transport.WebSocket in
         create socket.uri
-        |> open' >>= fun websocket ->
+        |> open_ >>= fun websocket ->
         Lwt_log.notice ~section "Probing websocket transport..." >>= fun () ->
         write websocket [(Packet.PING, Packet.P_String "probe")] >>= fun () ->
         receive websocket >>= fun packets ->
@@ -608,49 +638,52 @@ module Socket = struct
            Lwt.return_none)
       | _ -> Lwt.return_none
 
-  let on_open socket packet_data =
-    let handshake = Parser.parse_handshake packet_data in
-    Lwt_log.debug_f ~section "Got sid '%s'" Parser.(handshake.sid) >>= fun () ->
-    let transport =
-      Transport.on_open socket.transport handshake
-    in
-    let socket =
-      { socket with
-        ready_state = Open
-      ; handshake = Some handshake
-      ; transport = transport
-      ; uri =
-          Uri.add_query_param' socket.uri ("sid", Parser.(handshake.sid))
-      }
-    in
-    (* TODO: run the probe in parallel *)
-    probe socket >>= function
-    | None ->
-      Lwt.return socket
-    | Some transport ->
+  let on_open : t -> Packet.packet_data -> t Lwt.t =
+    fun socket packet_data ->
+      let handshake = Parser.parse_handshake packet_data in
+      Lwt_log.debug_f ~section "Got sid '%s'" Parser.(handshake.sid) >>= fun () ->
+      let transport =
+        Transport.on_open socket.transport handshake
+      in
+      let socket =
+        { socket with
+          ready_state = Open
+        ; handshake = Some handshake
+        ; transport = transport
+        ; uri =
+            Uri.add_query_param' socket.uri ("sid", Parser.(handshake.sid))
+        }
+      in
+      (* TODO: run the probe in parallel *)
+      probe socket >>= function
+      | None ->
+        Lwt.return socket
+      | Some transport ->
+        Lwt.return
+          { socket with
+            transport = transport
+          }
+
+  let on_pong : t -> t Lwt.t =
+    fun socket ->
+      let now = Unix.time () in
+      Lwt_log.debug_f ~section "PONG received at %.2f" now >>= fun () ->
       Lwt.return
         { socket with
-          transport = transport
+          pong_received_at = Some now
         }
 
-  let on_pong socket =
-    let now = Unix.time () in
-    Lwt_log.debug_f ~section "PONG received at %.2f" now >>= fun () ->
-    Lwt.return
-      { socket with
-        pong_received_at = Some now
-      }
-
-  let on_close socket =
-    let transport = Transport.on_close socket.transport in
-    Lwt.return
-      { socket with
-        ready_state = Closed
-      ; handshake = None
-      ; transport = transport
-      ; uri =
-          Uri.remove_query_param socket.uri "sid"
-      }
+  let on_close : t -> t Lwt.t =
+    fun socket ->
+      let transport = Transport.on_close socket.transport in
+      Lwt.return
+        { socket with
+          ready_state = Closed
+        ; handshake = None
+        ; transport = transport
+        ; uri =
+            Uri.remove_query_param socket.uri "sid"
+        }
 
   let process_packet : t -> Packet.t -> t Lwt.t =
     fun socket (packet_type, packet_data) ->
@@ -672,20 +705,21 @@ module Socket = struct
         Transport.close socket.transport >>= fun transport ->
         on_close socket
 
-  let log_socket_state socket =
-    Lwt_log.debug_f ~section "Socket is %s %s"
-      (string_of_ready_state socket.ready_state)
-      (Util.Option.value_map socket.handshake
-         ~default:"(no handshake)"
-         ~f:(fun handshake -> Format.sprintf "(%s)" (Parser.string_of_handshake handshake))) >>= fun () ->
-    Lwt_log.debug_f ~section "Transport is %s (%s)"
-      (string_of_ready_state
-         (match socket.transport with
-          | Transport.Polling polling ->
-            Transport.Polling.(polling.ready_state)
-          | Transport.WebSocket websocket ->
-            Transport.WebSocket.(websocket.ready_state)))
-      (Transport.string_of_t socket.transport)
+  let log_socket_state : t -> unit Lwt.t =
+    fun socket ->
+      Lwt_log.debug_f ~section "Socket is %s %s"
+        (string_of_ready_state socket.ready_state)
+        (Util.Option.value_map socket.handshake
+           ~default:"(no handshake)"
+           ~f:(fun handshake -> Format.sprintf "(%s)" (Parser.string_of_handshake handshake))) >>= fun () ->
+      Lwt_log.debug_f ~section "Transport is %s (%s)"
+        (string_of_ready_state
+           (match socket.transport with
+            | Transport.Polling polling ->
+              Transport.Polling.(polling.ready_state)
+            | Transport.WebSocket websocket ->
+              Transport.WebSocket.(websocket.ready_state)))
+        (Transport.string_of_t socket.transport)
 
   let with_connection : 'a. Uri.t -> ((Packet.t Lwt_stream.t) -> (string -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t =
     fun uri f ->
