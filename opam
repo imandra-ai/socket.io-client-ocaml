@@ -20,5 +20,6 @@ depends: [
   "cohttp"
   "lwt"
   "stringext"
+  "websocket"
   "yojson"
 ]
