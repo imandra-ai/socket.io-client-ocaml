@@ -1,11 +1,18 @@
+/*
+ * To run the test server:
+ * npm install
+ * DEBUG=engine* node index-engineio.js
+*/
+
 var engine = require('engine.io');
 console.log('serving on 3001');
-var server = engine.listen(3001);
+var server = engine.listen(3001, {allowUpgrades: true});
 
 server.on('connection', function(socket){
+    console.log('new connection', socket.id);
+    setTimeout(function() {socket.send('you connected not long ago');}, 1000);
     // socket.send('utf 8 string');
     // socket.send(new Buffer([0, 1, 2, 3, 4, 5])); // binary data
-    // console.log('new connection', socket.id);
     // socket.on('packet', function() {
     //     console.log(socket.id, 'packet', arguments);
     // });
