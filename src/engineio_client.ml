@@ -654,9 +654,9 @@ module Socket = struct
             pick
               (List.concat
                  [ (* If we're connected, wake up for pings. *)
-                   Util.Option.value_map socket.handshake
-                     ~default:[]
-                     ~f:(fun handshake -> [sleep_until_ping socket handshake])
+                   socket.handshake
+                   |> Util.Option.map ~f:(sleep_until_ping socket)
+                   |> Util.Option.to_list
                  ; [ sleep_until_packet_received ()
                    ; sleep_until_packet_to_send ()
                    ]
