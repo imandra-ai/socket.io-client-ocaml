@@ -3,7 +3,7 @@ open Lwt.Infix
 type ready_state =
   | Opening
   | Open
-  | Closing
+  | Closing (* TODO: do we need the Closing state? *)
   | Closed
 
 let string_of_ready_state = function
@@ -388,11 +388,8 @@ module Transport = struct
       }
 
     let close t =
-      ( [(Packet.CLOSE, Packet.P_None)]
-      , { t with
-          ready_state = Closing
-        }
-      )
+      write t [(Packet.CLOSE, Packet.P_None)] >>= fun () ->
+      Lwt.return (on_close t)
   end
 
   module WebSocket = struct
@@ -496,7 +493,7 @@ module Transport = struct
       match t.connection with
       | None ->
         Lwt_log.info ~section "Close attempt with no connection." >>= fun () ->
-        Lwt.return t
+        Lwt.return (on_close t)
       | Some (recv, send) ->
         send (Frame.close 1000) >>= fun () ->
         Lwt.return (on_close t)
@@ -547,11 +544,11 @@ module Transport = struct
   let close t =
     match t with
     | Polling polling ->
-      let packets, polling = Polling.close polling in
-      Lwt.return (packets, Polling polling)
+      Polling.close polling >>= fun polling ->
+      Lwt.return (Polling polling)
     | WebSocket websocket ->
       WebSocket.close websocket >>= fun websocket ->
-      Lwt.return ([], WebSocket websocket)
+      Lwt.return (WebSocket websocket)
 end
 
 module Socket = struct
@@ -655,14 +652,6 @@ module Socket = struct
           Uri.remove_query_param socket.uri "sid"
       }
 
-  let on_noop socket =
-    (* TODO: On the polling transport, the server sends a NOOP after we send a
-       CLOSE. Check that the same is true of the websocket transport (probably
-       not). *)
-    match socket.ready_state with
-    | Closing -> on_close socket
-    | _ -> Lwt.return socket
-
   let process_packet : t -> Packet.t -> t Lwt.t =
     fun socket (packet_type, packet_data) ->
       Lwt_log.debug_f ~section "process_packet %s"
@@ -673,26 +662,16 @@ module Socket = struct
       | Packet.OPEN -> on_open socket packet_data
       | Packet.PONG -> on_pong socket
       | Packet.CLOSE -> on_close socket
-      | Packet.NOOP -> on_noop socket
       | _ -> Lwt.return socket
 
-  let close : t -> (Packet.t list * t) Lwt.t =
+  let close : t -> t Lwt.t =
     fun socket ->
       match socket.ready_state with
       | Closing
-      | Closed -> Lwt.return ([], socket)
+      | Closed -> Lwt.return socket
       | _ ->
-        Transport.close socket.transport >>= fun (packets, transport) ->
-        Lwt.return
-          ( packets
-          , { socket with
-              ready_state =
-                (match packets with
-                 | [] -> Closed
-                 | _ ->  Closing)
-            ; transport = transport
-            }
-          )
+        Transport.close socket.transport >>= fun transport ->
+        on_close socket
 
   let log_socket_state socket =
     Lwt_log.debug_f ~section "Socket is %s %s"
@@ -796,9 +775,7 @@ module Socket = struct
         else
           (* User thread has finished; close the socket *)
           Lwt_log.debug ~section "User thread has finished; closing the socket." >>= fun () ->
-          close socket >>= fun (packets, socket) ->
-          Lwt_list.iter_s send packets >>= fun () ->
-          Lwt.return socket
+          close socket
       in
       let rec maintain_connection : 'a. unit Lwt.t -> 'a Lwt.t -> t -> 'a Lwt.t =
         (* TODO: handle user thread finishing before open *)
