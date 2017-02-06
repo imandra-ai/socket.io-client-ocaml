@@ -776,7 +776,6 @@ module Socket = struct
           close socket
       in
       let rec maintain_connection : 'a. unit Lwt.t -> 'a Lwt.t -> t -> 'a Lwt.t =
-        (* TODO: handle user thread finishing before open *)
         fun poll_promise user_promise socket ->
           log_socket_state socket >>= fun () ->
           let poll_promise = maybe_poll_again poll_promise socket in
