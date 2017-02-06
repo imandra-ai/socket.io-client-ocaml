@@ -545,9 +545,9 @@ module Transport = struct
                 (* Translate Websocket Close frame into an Engine.io Close packet. *)
                 Lwt.return_some
                   ( Packet.CLOSE
-                   , Packet.P_Binary
-                       (frame.content |> Stringext.to_list |> List.map Char.code)
-                   )
+                  , Packet.P_Binary
+                      (frame.content |> Stringext.to_list |> List.map Char.code)
+                  )
               | _ ->
                 Lwt_log.error_f ~section "Unexpected frame %s"
                   (Frame.show frame) >>= fun () ->
@@ -697,16 +697,16 @@ module Socket = struct
         write websocket [Packet.ping_probe] >>= fun () ->
         receive websocket >>= fun () ->
         (Lwt_stream.get websocket.packets >>= function
-         | Some (Packet.PONG, Packet.P_String "probe") ->
-           Lwt_log.notice ~section "Ok to upgrade." >>= fun () ->
-           Lwt.return (Some (Transport.WebSocket websocket))
-         | Some (packet_type, packet_data) ->
-           Lwt_log.error_f ~section "Can not upgrade. Expecting PONG, but got '%s'."
-             (Packet.string_of_packet_type packet_type) >>= fun () ->
-           Lwt.return_none
-         | None ->
-           Lwt_log.error ~section "Can not upgrade. Expecting PONG, but didn't get a Packet." >>= fun () ->
-           Lwt.return_none)
+          | Some (Packet.PONG, Packet.P_String "probe") ->
+            Lwt_log.notice ~section "Ok to upgrade." >>= fun () ->
+            Lwt.return (Some (Transport.WebSocket websocket))
+          | Some (packet_type, packet_data) ->
+            Lwt_log.error_f ~section "Can not upgrade. Expecting PONG, but got '%s'."
+              (Packet.string_of_packet_type packet_type) >>= fun () ->
+            Lwt.return_none
+          | None ->
+            Lwt_log.error ~section "Can not upgrade. Expecting PONG, but didn't get a Packet." >>= fun () ->
+            Lwt.return_none)
       else
         Lwt.return_none
 
@@ -785,6 +785,101 @@ module Socket = struct
               Transport.WebSocket.(websocket.ready_state)))
         (Transport.string_of_t socket.transport)
 
+  let maybe_poll_again poll_promise socket =
+    match socket.ready_state, Lwt.is_sleeping poll_promise with
+    | Closed, _ (* socket closed, don't renew *)
+    | _, true -> poll_promise (* still polling, don't renew *)
+    | _ -> Transport.receive socket.transport (* poll again *)
+
+  let sleep_until_ping socket handshake =
+    match socket.ping_sent_at, socket.pong_received_at with
+    | None, _ ->
+      Lwt_log.info ~section "No ping sent: send ping now"
+    | Some ping_sent_at, None ->
+      (* We are waiting for PONG from server. Raise Timeout if we
+         don't get it in time. *)
+      let seconds_since_last_ping =
+        Unix.time () -. ping_sent_at in
+      let ping_timeout_seconds =
+        (float_of_int Parser.(handshake.ping_timeout)) /. 1000.0 in
+      let timeout_seconds =
+        ping_timeout_seconds -. seconds_since_last_ping in
+      Lwt_log.info_f ~section "Waiting %.2f seconds for PONG" timeout_seconds >>= fun () ->
+      Lwt_unix.timeout timeout_seconds
+    | _, Some pong_received_at ->
+      (* All good, send a PING at the next interval. *)
+      let seconds_since_last_pong =
+        Unix.time () -. pong_received_at in
+      let ping_interval_seconds =
+        (float_of_int Parser.(handshake.ping_interval)) /. 1000.0 in
+      let sleep_seconds =
+        ping_interval_seconds -. seconds_since_last_pong in
+      Lwt_log.info_f ~section "Will ping in %.2f seconds" sleep_seconds >>= fun () ->
+      Lwt_unix.sleep sleep_seconds >>= fun () ->
+      Lwt_log.info ~section "Waking to send ping"
+
+  let maybe_send_ping socket queue_packet =
+    let should_ping =
+      match socket.ready_state, socket.handshake with
+      | Closed, _ -> false
+      | _, None -> false (* Not connected. *)
+      | _, Some handshake ->
+        (match socket.ping_sent_at, socket.pong_received_at with
+         | None, _ -> true (* No ping sent yet. *)
+         | Some _, None -> false (* Ping sent, waiting for pong. *)
+         | _, Some pong_received_at ->
+           let seconds_since_last_pong = Unix.time () -. pong_received_at in
+           let ping_interval_seconds = (float_of_int Parser.(handshake.ping_interval)) /. 1000.0 in
+           seconds_since_last_pong >= ping_interval_seconds)
+    in
+    if should_ping then
+      queue_packet Packet.ping >>= fun () ->
+      Lwt.return
+        { socket with
+          ping_sent_at = Some (Unix.time ())
+        ; pong_received_at = None
+        }
+    else
+      Lwt.return socket
+
+  let sleep_until_packet_received socket =
+    Lwt_stream.peek (Transport.packet_stream socket.transport) >>= fun _ ->
+    Lwt_log.info ~section "Waking to process a packet"
+
+  let sleep_until_packet_to_send packets_send_stream =
+    Lwt_stream.peek packets_send_stream >>= fun _ ->
+    Lwt_log.info ~section "Waking to send a packet"
+
+  let maybe_close socket user_promise =
+    if Lwt.is_sleeping user_promise then
+      Lwt.return socket
+    else
+      (* User thread has finished; close the socket *)
+      Lwt_log.debug ~section "User thread has finished; closing the socket." >>= fun () ->
+      close socket
+
+  let maybe_switch_transports socket =
+    match socket.probe_promise with
+    | Some promise when not (Lwt.is_sleeping promise) ->
+      promise >>= fun transport_opt ->
+      let socket =
+        { socket with
+          probe_promise = None
+        }
+      in
+      (match transport_opt with
+       | Some transport ->
+         let socket =
+           { socket with
+             transport =
+               Util.Option.value ~default:socket.transport transport_opt
+           }
+         in
+         write socket [Packet.upgrade] >>= fun () ->
+         Lwt.return socket
+       | None -> Lwt.return socket)
+    | _ -> Lwt.return socket
+
   let with_connection : 'a. Uri.t -> ((Packet.t Lwt_stream.t) -> (string -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t =
     fun uri f ->
       (* packets to send via transport *)
@@ -792,106 +887,19 @@ module Socket = struct
         Lwt_stream.create () in
       let send packet =
         push_packet_send (Some packet); Lwt.return_unit in
-      let maybe_poll_again poll_promise socket =
-        match socket.ready_state, Lwt.is_sleeping poll_promise with
-        | Closed, _ (* socket closed, don't renew *)
-        | _, true -> poll_promise (* still polling, don't renew *)
-        | _ -> Transport.receive socket.transport (* poll again *)
-      in
-      let sleep_until_ping socket handshake =
-        match socket.ping_sent_at, socket.pong_received_at with
-        | None, _ ->
-          Lwt_log.info ~section "No ping sent: send ping now"
-        | Some ping_sent_at, None ->
-          (* We are waiting for PONG from server. Raise Timeout if we
-             don't get it in time. *)
-          let seconds_since_last_ping =
-            Unix.time () -. ping_sent_at in
-          let ping_timeout_seconds =
-            (float_of_int Parser.(handshake.ping_timeout)) /. 1000.0 in
-          let timeout_seconds =
-            ping_timeout_seconds -. seconds_since_last_ping in
-          Lwt_log.info_f ~section "Waiting %.2f seconds for PONG" timeout_seconds >>= fun () ->
-          Lwt_unix.timeout timeout_seconds
-        | _, Some pong_received_at ->
-          (* All good, send a PING at the next interval. *)
-          let seconds_since_last_pong =
-            Unix.time () -. pong_received_at in
-          let ping_interval_seconds =
-            (float_of_int Parser.(handshake.ping_interval)) /. 1000.0 in
-          let sleep_seconds =
-            ping_interval_seconds -. seconds_since_last_pong in
-          Lwt_log.info_f ~section "Will ping in %.2f seconds" sleep_seconds >>= fun () ->
-          Lwt_unix.sleep sleep_seconds >>= fun () ->
-          Lwt_log.info ~section "Waking to send ping"
-      in
-      let maybe_send_ping socket =
-        let should_ping =
-          match socket.ready_state, socket.handshake with
-          | Closed, _ -> false
-          | _, None -> false (* Not connected. *)
-          | _, Some handshake ->
-            (match socket.ping_sent_at, socket.pong_received_at with
-             | None, _ -> true (* No ping sent yet. *)
-             | Some _, None -> false (* Ping sent, waiting for pong. *)
-             | _, Some pong_received_at ->
-               let seconds_since_last_pong = Unix.time () -. pong_received_at in
-               let ping_interval_seconds = (float_of_int Parser.(handshake.ping_interval)) /. 1000.0 in
-               seconds_since_last_pong >= ping_interval_seconds)
-        in
-        if should_ping then
-          send Packet.ping >>= fun () ->
-          Lwt.return
-            { socket with
-              ping_sent_at = Some (Unix.time ())
-            ; pong_received_at = None
-            }
-        else
-          Lwt.return socket
-      in
-      let sleep_until_packet_received socket =
-        Lwt_stream.peek (Transport.packet_stream socket.transport) >>= fun _ ->
-        Lwt_log.info ~section "Waking to process a packet"
-      in
-      let sleep_until_packet_to_send () =
-        Lwt_stream.peek packets_send_stream >>= fun _ ->
-        Lwt_log.info ~section "Waking to send a packet"
-      in
-      let maybe_close socket user_promise =
-        if Lwt.is_sleeping user_promise then
-          Lwt.return socket
-        else
-          (* User thread has finished; close the socket *)
-          Lwt_log.debug ~section "User thread has finished; closing the socket." >>= fun () ->
-          close socket
-      in
-      let maybe_switch_transports socket =
-        match socket.probe_promise with
-        | Some promise when not (Lwt.is_sleeping promise) ->
-          promise >>= fun transport_opt ->
-          let socket =
-            { socket with
-              probe_promise = None
-            }
-          in
-          (match transport_opt with
-           | Some transport ->
-             let socket =
-               { socket with
-                 transport =
-                   Util.Option.value ~default:socket.transport transport_opt
-               }
-             in
-             write socket [Packet.upgrade] >>= fun () ->
-             Lwt.return socket
-           | None -> Lwt.return socket)
-        | _ -> Lwt.return socket
-      in
       let rec maintain_connection : 'a. unit Lwt.t -> 'a Lwt.t -> t -> 'a Lwt.t =
         fun poll_promise user_promise socket ->
           log_socket_state socket >>= fun () ->
-          (* maybe_switch_transports socket >>= fun socket -> *)
+          (* Re-start the promise that waits on new packets from the
+             transport. *)
           let poll_promise = maybe_poll_again poll_promise socket in
+          (* Create a promise that sleeps until:
+             - we need to send a PING;
+             - the server has failed to respond with a PONG;
+             - the transport recevied a packet; or
+             - the user has given us a packet to send.
+             When one promise returns, the others are canceled.
+          *)
           let sleep_promise =
             Lwt.pick
               (List.concat
@@ -901,10 +909,17 @@ module Socket = struct
                     | _, None -> []
                     | _, Some handshake -> [sleep_until_ping socket handshake])
                  ; [ sleep_until_packet_received socket
-                   ; sleep_until_packet_to_send ()
+                   ; sleep_until_packet_to_send packets_send_stream
                    ]
                  ])
           in
+          (* Create a promise that sleeps until one of the following returns:
+             - the user's callback (if it hasn't already);
+             - the transport upgrade probe (if there is one);
+             - the transport polling promise; or
+             - one of the sleep promises above.
+             When one of these promises returns, the others are NOT canceled.
+          *)
           Lwt.choose
             (List.concat
                [ if Lwt.is_sleeping user_promise then [user_promise >>= fun _ -> Lwt.return_unit] else []
@@ -915,23 +930,32 @@ module Socket = struct
                  ; sleep_promise
                  ]
                ]) >>= fun () ->
+          (* Explicitly cancel the sleep promises. *)
           let () = Lwt.cancel sleep_promise in
+          (* If the upgrade probe was successful, complete the transport
+             upgrade. *)
           maybe_switch_transports socket >>= fun socket ->
-          Lwt_list.fold_left_s
-            process_packet
-            socket
-            (Lwt_stream.get_available (Transport.packet_stream socket.transport)) >>= fun socket ->
+          (* Process packets receveived over the transport. *)
+          Lwt_list.fold_left_s process_packet socket
+            (Lwt_stream.get_available
+               (Transport.packet_stream socket.transport)) >>= fun socket ->
+          (* Close the socket if the user callback has returned. *)
           maybe_close socket user_promise >>= fun socket ->
-          maybe_send_ping socket >>= fun socket ->
+          (* Send a ping packet if we need to. *)
+          maybe_send_ping socket send >>= fun socket ->
+          (* Flush the queued packets to the transport. *)
           write socket (Lwt_stream.get_available packets_send_stream) >>= fun () ->
+          (* If the socket is closed, return the user's callback. Otherwise, loop. *)
           match socket.ready_state with
           | Closed ->
             Lwt_log.debug ~section "Socket is Closed, now waiting for user promise to terminate." >>= fun () ->
             user_promise
           | _ -> maintain_connection poll_promise user_promise socket
       in
-      let socket = create uri in
-      let poll_promise = Transport.receive socket.transport in
+      let socket =
+        create uri in
+      let poll_promise =
+        Transport.receive socket.transport in
       let user_promise =
         f socket.packets
           (fun data -> send (Packet.message data))
