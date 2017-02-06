@@ -127,6 +127,22 @@ module Packet = struct
     | P_None -> false
     | P_String data -> false
     | P_Binary data -> true
+
+  let close : t =
+    (CLOSE, P_None)
+
+  let ping : t =
+    (PING, P_None)
+
+  let ping_probe : t =
+    (PING, P_String "probe")
+
+  let upgrade : t =
+    (UPGRADE, P_None)
+
+  let message : string -> t =
+    fun string ->
+      (MESSAGE, P_String string)
 end
 
 module Parser = struct
@@ -340,7 +356,7 @@ module Transport = struct
             push_packet
         }
 
-    let log_packet : Packet.packet_type * Packet.packet_data -> unit Lwt.t =
+    let log_packet : Packet.t -> unit Lwt.t =
       fun (packet_type, packet_data) ->
         Lwt_log.debug_f ~section "Decoded packet %s with data: '%s'"
           (Packet.string_of_packet_type packet_type |> String.uppercase_ascii)
@@ -441,7 +457,7 @@ module Transport = struct
 
     let close : t -> t Lwt.t =
       fun t ->
-        write t [(Packet.CLOSE, Packet.P_None)] >>= fun () ->
+        write t [Packet.close] >>= fun () ->
         Lwt.return (on_close t)
   end
 
@@ -678,7 +694,7 @@ module Socket = struct
         create uri
         |> open_ >>= fun websocket ->
         Lwt_log.notice ~section "Probing websocket transport..." >>= fun () ->
-        write websocket [(Packet.PING, Packet.P_String "probe")] >>= fun () ->
+        write websocket [Packet.ping_probe] >>= fun () ->
         receive websocket >>= fun () ->
         (Lwt_stream.get websocket.packets >>= function
          | Some (Packet.PONG, Packet.P_String "probe") ->
@@ -824,7 +840,7 @@ module Socket = struct
                seconds_since_last_pong >= ping_interval_seconds)
         in
         if should_ping then
-          send (Packet.PING, Packet.P_None) >>= fun () ->
+          send Packet.ping >>= fun () ->
           Lwt.return
             { socket with
               ping_sent_at = Some (Unix.time ())
@@ -866,7 +882,7 @@ module Socket = struct
                    Util.Option.value ~default:socket.transport transport_opt
                }
              in
-             write socket [(Packet.UPGRADE, Packet.P_None)] >>= fun () ->
+             write socket [Packet.upgrade] >>= fun () ->
              Lwt.return socket
            | None -> Lwt.return socket)
         | _ -> Lwt.return socket
@@ -918,7 +934,7 @@ module Socket = struct
       let poll_promise = Transport.receive socket.transport in
       let user_promise =
         f socket.packets
-          (fun data -> send (Packet.MESSAGE, Packet.P_String data))
+          (fun data -> send (Packet.message data))
       in
       maintain_connection poll_promise user_promise socket
 end
