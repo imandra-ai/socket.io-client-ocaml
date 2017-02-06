@@ -59,12 +59,12 @@ module Packet = struct
     | NOOP
     | ERROR
 
-  type payload =
+  type packet_data =
     | P_None
     | P_String of string
     | P_Binary of int list
 
-  type t = packet_type * payload
+  type t = packet_type * packet_data
 
   let string_of_packet_type = function
     | OPEN -> "open"
@@ -101,7 +101,9 @@ module Parser = struct
 
   let protocol = 3
 
-  let decode_packet (is_string : bool) (codes : int list) : (Packet.packet_type * Packet.payload) =
+  (* See https://github.com/socketio/engine.io-protocol#encoding *)
+
+  let decode_packet (is_string : bool) (codes : int list) : Packet.t =
     match codes with
     | i :: rest ->
       ( i |> Char.chr |> Stringext.of_char |> int_of_string |> Packet.packet_type_of_int
@@ -115,7 +117,7 @@ module Parser = struct
     | [] ->
       (Packet.ERROR, Packet.P_String "Empty packet")
 
-  let decode_payload_as_binary : string -> (Packet.packet_type * Packet.payload) list =
+  let decode_payload_as_binary : string -> Packet.t list =
     fun string ->
       let decode_payload is_string payload_length codes =
         let (this_packet_data, codes) = Util.List.split_at payload_length codes in
@@ -148,7 +150,7 @@ module Parser = struct
       let char_codes = Stringext.to_list string |> List.map Char.code in
       go char_codes
 
-  let encode_packet : (Packet.packet_type * Packet.payload) -> string =
+  let encode_packet : Packet.t -> string =
     fun (packet_type, payload) ->
       let (bin_flag, data_length, data_as_string) =
         match payload with
@@ -192,7 +194,7 @@ module Parser = struct
       handshake.ping_interval
       handshake.ping_timeout
 
-  let parse_handshake : Packet.payload -> handshake =
+  let parse_handshake : Packet.packet_data -> handshake =
     fun packet_data ->
       match packet_data with
       | Packet.P_None -> raise (Invalid_argument "no data")
