@@ -382,20 +382,10 @@ module Transport = struct
           |> (Util.flip Uri.remove_query_param) "sid"
       }
 
-    let close t push_packet =
-      match t.ready_state with
-      | Opening
-      | Open ->
-        let t =
-          { t with
-            ready_state = Closed
-          }
-        in
-        Lwt.(
-          write t [(Packet.CLOSE, Packet.P_None)] >>= fun _ -> return t
-        )
-      | _ ->
-        Lwt.return t
+    let close t =
+      { t with
+        ready_state = Closing
+      }
   end
 
   (* TODO: allow different transports *)
@@ -415,12 +405,9 @@ module Transport = struct
     )
 
   let write t packets =
-    match packets with
-    | [] -> Lwt.return_unit
-    | _ ->
-      (match t with
-       | Polling polling ->
-         Polling.write polling packets)
+    match t with
+    | Polling polling ->
+      Polling.write polling packets
 
   let on_open t handshake =
     match t with
@@ -436,6 +423,11 @@ module Transport = struct
     match t with
     | Polling polling ->
       Polling.do_poll polling
+
+  let close t =
+    match t with
+    | Polling polling ->
+      Polling (Polling.close polling)
 end
 
 module Socket = struct
@@ -469,7 +461,10 @@ module Socket = struct
 
   let write : t -> Packet.t list -> unit Lwt.t =
     fun socket packets ->
-      Transport.write socket.transport packets
+      match socket.ready_state, packets with
+      | Closed, _
+      | _, [] -> Lwt.return_unit
+      | _, _ -> Transport.write socket.transport packets
 
   let on_open socket packet_data =
     Lwt.(
@@ -489,7 +484,7 @@ module Socket = struct
   let on_pong socket =
     Lwt.(
       let now = Unix.time () in
-      Lwt_io.printlf "PONG received at %f" now >>= fun () ->
+      Lwt_io.printlf "PONG received at %.2f" now >>= fun () ->
       return
         { socket with
           pong_received_at = Some now
@@ -505,6 +500,13 @@ module Socket = struct
       ; transport = transport
       }
 
+  let on_noop socket =
+    (* TODO: on the polling transport, the server sends a NOOP after we send a
+    CLOSE. Check this is the same on the websocket transport (probably not). *)
+    match socket.ready_state with
+    | Closing -> on_close socket
+    | _ -> Lwt.return socket
+
   let process_packet : t -> Packet.t -> t Lwt.t =
     fun socket (packet_type, packet_data) ->
       Lwt.(
@@ -512,8 +514,22 @@ module Socket = struct
         | Packet.OPEN -> on_open socket packet_data
         | Packet.PONG -> on_pong socket
         | Packet.CLOSE -> on_close socket
+        | Packet.NOOP -> on_noop socket
         | _ -> return socket
       )
+
+  let close : t -> Packet.t list * t =
+    fun socket ->
+      match socket.ready_state with
+      | Closing
+      | Closed -> ([], socket)
+      | _ ->
+        ( [(Packet.CLOSE, Packet.P_None)]
+        , { socket with
+            ready_state = Closing
+          ; transport = Transport.close socket.transport
+          }
+        )
 
   let log_socket_state socket =
     Lwt.(
@@ -545,10 +561,10 @@ module Socket = struct
           Lwt_stream.iter (fun packet -> push_packet_recv (Some packet)) packets
         in
         let maybe_renew_poll_promise poll_promise socket =
-          if is_sleeping poll_promise then
-            poll_promise
-          else
-            poll_once socket
+          match socket.ready_state, is_sleeping poll_promise with
+          | Closed, _ (* socket closed, don't renew *)
+          | _, true -> poll_promise (* still polling, don't renew *)
+          | _ -> poll_once socket (* poll again *)
         in
         let sleep_until_ping socket handshake =
           match socket.ping_sent_at, socket.pong_received_at with
@@ -563,7 +579,7 @@ module Socket = struct
               (float_of_int Parser.(handshake.ping_timeout)) /. 1000.0 in
             let timeout_seconds =
               ping_timeout_seconds -. seconds_since_last_ping in
-            Lwt_io.printlf "Waiting %f seconds for PONG" timeout_seconds >>= fun () ->
+            Lwt_io.printlf "Waiting %.2f seconds for PONG" timeout_seconds >>= fun () ->
             Lwt_unix.timeout timeout_seconds
           | _, Some pong_received_at ->
             (* All good, send a PING at the next interval. *)
@@ -573,15 +589,17 @@ module Socket = struct
               (float_of_int Parser.(handshake.ping_interval)) /. 1000.0 in
             let sleep_seconds =
               ping_interval_seconds -. seconds_since_last_pong in
-            Lwt_io.printlf "Will ping in %f seconds" sleep_seconds >>= fun () ->
+            Lwt_io.printlf "Will ping in %.2f seconds" sleep_seconds >>= fun () ->
             Lwt_unix.sleep sleep_seconds >>= fun () ->
             Lwt_io.printl "Waking to send ping"
         in
         let maybe_send_ping socket =
           let should_ping =
-            match socket.handshake with
-            | None -> false (* Not connected. *)
-            | Some handshake ->
+            match socket.ready_state, socket.handshake with
+            | Closing, _
+            | Closed, _ -> false
+            | _, None -> false (* Not connected. *)
+            | _, Some handshake ->
               (match socket.ping_sent_at, socket.pong_received_at with
                | None, _ -> true (* No ping sent yet. *)
                | Some _, None -> false (* Ping sent, waiting for pong. *)
@@ -600,18 +618,28 @@ module Socket = struct
           else
             return socket
         in
-        let rec maintain_connection poll_promise socket  =
+        let sleep_until_packet_received () =
+          Lwt_stream.peek packets_recv_stream >>= fun _ ->
+          Lwt_io.printl "Waking to process a packet"
+        in
+        let sleep_until_packet_to_send () =
+          Lwt_stream.peek packets_send_stream >>= fun _ ->
+          Lwt_io.printl "Waking to send a packet"
+        in
+        let maybe_close socket user_promise =
+          if is_sleeping user_promise then
+            return socket
+          else
+            (* User thread has finished; close the socket *)
+            Lwt_io.printl "User thread has finished; closing the socket." >>= fun () ->
+            let packets, socket = close socket in
+            Lwt_list.iter_s send packets >>= fun () ->
+            return socket
+        in
+        let rec maintain_connection poll_promise user_promise socket  =
           log_socket_state socket >>= fun () ->
           let poll_promise = maybe_renew_poll_promise poll_promise socket in
-          let sleep_until_packet_received () =
-            Lwt_stream.peek packets_recv_stream >>= fun _ ->
-            Lwt_io.printl "Waking to process a packet"
-          in
-          let sleep_until_packet_to_send () =
-            Lwt_stream.peek packets_send_stream >>= fun _ ->
-            Lwt_io.printl "Waking to send a packet"
-          in
-          let sleep_promises =
+          let sleep_promise =
             pick
               (List.concat
                  [ Util.Option.value_map socket.handshake
@@ -623,29 +651,31 @@ module Socket = struct
                  ])
           in
           choose
-            [ poll_promise
-            ; sleep_promises
-            ] >>= fun () ->
-          let () = cancel sleep_promises in
+            (List.concat
+               [ if is_sleeping user_promise then [user_promise] else []
+               ; [ poll_promise
+                 ; sleep_promise
+                 ]
+               ]) >>= fun () ->
+          let () = cancel sleep_promise in
           Lwt_list.fold_left_s
             process_packet
             socket
             (Lwt_stream.get_available packets_recv_stream) >>= fun socket ->
+          maybe_close socket user_promise >>= fun socket ->
           maybe_send_ping socket >>= fun socket ->
           write socket (Lwt_stream.get_available packets_send_stream) >>= fun () ->
-          maintain_connection poll_promise socket
+          match socket.ready_state with
+          | Closed -> user_promise
+          | _ -> maintain_connection poll_promise user_promise socket
         in
         let socket = create uri in
-        pick
-          [ maintain_connection (poll_once socket) socket
-          ; finalize
-              (fun () ->
-                 f (Lwt_stream.clone packets_recv_stream)
-                   (fun data -> send (Packet.MESSAGE, Packet.P_String data)))
-              (fun () ->
-                 (* TODO: fix closing the socket *)
-                 write socket [(Packet.CLOSE, Packet.P_None)])
-          ]
+        let poll_promise = poll_once socket in
+        let user_promise =
+          f (Lwt_stream.clone packets_recv_stream)
+            (fun data -> send (Packet.MESSAGE, Packet.P_String data))
+        in
+        maintain_connection poll_promise user_promise socket
       )
 end
 
