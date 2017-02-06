@@ -281,7 +281,7 @@ end
 
 module Transport = struct
   module Polling = struct
-    let section = Lwt_log.Section.make "transport.polling"
+    let section = Lwt_log.Section.make "eio.transport.polling"
 
     type t =
       { ready_state : ready_state
@@ -397,7 +397,7 @@ module Transport = struct
   module WebSocket = struct
     open Websocket_lwt
 
-    let section = Lwt_log.Section.make "websocket"
+    let section = Lwt_log.Section.make "eio.transport.websocket"
 
     type t =
       { ready_state : ready_state
@@ -551,7 +551,7 @@ module Transport = struct
 end
 
 module Socket = struct
-  let section = Lwt_log.Section.make "socket"
+  let section = Lwt_log.Section.make "eio.socket"
 
   type t =
     { ready_state : ready_state
