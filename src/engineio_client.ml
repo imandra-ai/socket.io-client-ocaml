@@ -444,11 +444,13 @@ module Transport = struct
 
     let receive : t -> Packet.t list Lwt.t =
       fun t ->
-      match t.connection with
-      | None ->
+      match (t.ready_state, t.connection) with
+      | Closing, _
+      | Closed, _
+      | _, None ->
         Lwt_log.info ~section "Receive attempt with no connection." >>= fun () ->
         Lwt.return_nil
-      | Some (recv, send) ->
+      | _, Some (recv, send) ->
         let react frame =
           Frame.(
             Lwt_log.debug_f ~section "Received frame %s"
@@ -478,18 +480,6 @@ module Transport = struct
           (fun () -> recv () >>= react)
           (fun exn -> Lwt_log.error_f ~section "receive" >>= fun () -> Lwt.fail exn)
 
-    let close t =
-      match t.connection with
-      | None ->
-        Lwt_log.info ~section "Close attempt with no connection." >>= fun () ->
-        Lwt.return t
-      | Some (recv, send) ->
-        send (Frame.close 1000) >>= fun () ->
-        Lwt.return
-          { t with
-            ready_state = Closing
-          }
-
     let on_close t =
       { ready_state = Closed
       ; connection = None
@@ -497,6 +487,15 @@ module Transport = struct
           t.uri
           |> (Util.flip Uri.remove_query_param) "sid"
       }
+
+    let close t =
+      match t.connection with
+      | None ->
+        Lwt_log.info ~section "Close attempt with no connection." >>= fun () ->
+        Lwt.return t
+      | Some (recv, send) ->
+        send (Frame.close 1000) >>= fun () ->
+        Lwt.return (on_close t)
   end
 
   type t =
@@ -680,7 +679,10 @@ module Socket = struct
         Lwt.return
           ( packets
           , { socket with
-              ready_state = Closing
+              ready_state =
+                (match packets with
+                 | [] -> Closed
+                 | _ ->  Closing)
             ; transport = transport
             }
           )
