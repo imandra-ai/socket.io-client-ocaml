@@ -100,6 +100,18 @@ module Packet = struct
     | UPGRADE -> 5
     | NOOP -> 6
     | ERROR -> -1
+
+  let string_of_packet_data : packet_data -> string =
+    function
+    | P_None -> ""
+    | P_String data -> data
+    | P_Binary data -> Stringext.of_list (List.map Char.chr data)
+
+  let is_binary : packet_data -> bool =
+    function
+    | P_None -> false
+    | P_String data -> false
+    | P_Binary data -> true
 end
 
 module Parser = struct
@@ -156,34 +168,45 @@ module Parser = struct
       go char_codes
 
   let encode_packet : Packet.t -> string =
-    fun (packet_type, payload) ->
-      let (bin_flag, data_length, data_as_string) =
-        match payload with
-        | Packet.P_None -> (0, 0, "")
-        | Packet.P_String data -> (0, String.length data, data)
-        | Packet.P_Binary data -> (1, List.length data, (Stringext.of_list (List.map Char.chr data)))
+    fun (packet_type, packet_data) ->
+      Printf.sprintf "%i%s"
+        (Packet.int_of_packet_type packet_type)
+        (Packet.string_of_packet_data packet_data)
+
+  let encode_payload : Packet.t list -> string =
+    fun packets ->
+      let encode_one_packet (packet_type, packet_data) =
+        let bin_flag =
+          if Packet.is_binary packet_data then
+            1
+          else
+            0
+        in
+        let data_as_string = Packet.string_of_packet_data packet_data in
+        let payload_length =
+          (* the length of the data plus one for the packet type *)
+          1 + (String.length data_as_string)
+        in
+        let length_as_digits =
+          (* convert the integer length of the packet_data to a byte string *)
+          payload_length                (* 97 *)
+          |> string_of_int              (* -> "97" *)
+          |> Stringext.to_list          (* -> ['9'; '7']*)
+          |> List.map Stringext.of_char (* -> ["9"; "7"] *)
+          |> List.map int_of_string     (* -> [9; 7] *)
+          |> List.map Char.chr          (* -> ['\t'; '\007'] *)
+          |> Stringext.of_list          (* -> "\t\007" *)
+        in
+        Printf.sprintf "%c%s%c%i%s"
+          (Char.chr bin_flag)
+          length_as_digits
+          (Char.chr 255)
+          (Packet.int_of_packet_type packet_type)
+          data_as_string
       in
-      let payload_length =
-        (* the length of the data plus one for the packet type *)
-        1 + data_length
-      in
-      let length_as_digits =
-        (* convert the integer length of the payload to a byte string *)
-        payload_length                (* 97 *)
-        |> string_of_int              (* -> "97" *)
-        |> Stringext.to_list          (* -> ['9'; '7']*)
-        |> List.map Stringext.of_char (* -> ["9"; "7"] *)
-        |> List.map int_of_string     (* -> [9; 7] *)
-        |> List.map Char.chr          (* -> ['\t'; '\007'] *)
-        |> Stringext.of_list          (* -> "\t\007" *)
-      in
-      String.concat ""
-        [ Stringext.of_char (Char.chr bin_flag)
-        ; length_as_digits
-        ; Stringext.of_char (Char.chr 255)
-        ; string_of_int (Packet.int_of_packet_type packet_type)
-        ; data_as_string
-        ]
+      packets
+      |> List.map encode_one_packet
+      |> String.concat ""
 
   type handshake =
     { sid : string
@@ -330,9 +353,7 @@ module Transport = struct
       fun t packets ->
         Lwt.(Cohttp.(Cohttp_lwt_unix.(
             let encoded_payload =
-              packets
-              |> List.map Parser.encode_packet
-              |> String.concat ""
+              Parser.encode_payload packets
             in
             Lwt_io.printlf "POST '%s' with data '%s'"
               (Uri.to_string t.uri)
