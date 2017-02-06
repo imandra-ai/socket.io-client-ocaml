@@ -596,9 +596,12 @@ module Socket = struct
            Lwt_log.notice ~section "Ok to upgrade." >>= fun () ->
            write websocket [(Packet.UPGRADE, Packet.P_None)] >>= fun () ->
            Lwt.return (Some (Transport.WebSocket websocket))
-         | (packet_type, packet_data) :: _ ->
+         | (packet_type, packet_data) :: rest ->
            Lwt_log.error_f ~section "Can not upgrade. Expecting PONG, but got '%s'."
              (Packet.string_of_packet_type packet_type) >>= fun () ->
+           (match rest with
+            | [] -> Lwt.return_unit
+            | _ -> Lwt_log.error ~section "Received more packets than expected.") >>= fun () ->
            Lwt.return_none
          | [] ->
            Lwt_log.error ~section "Can not upgrade. Expecting PONG, but didn't get a Packet." >>= fun () ->
