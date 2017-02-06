@@ -257,8 +257,8 @@ module Transport = struct
 
     let log_packet (packet_type, packet_data) =
       Lwt.(
-        Lwt_io.printlf "decoded packet: '%s' data: '%s'"
-          (Packet.string_of_packet_type packet_type)
+        Lwt_io.printlf "decoded packet %s with data: '%s'"
+          (Packet.string_of_packet_type packet_type |> String.uppercase_ascii)
           (match packet_data with
            | Packet.P_None -> "no data"
            | Packet.P_String string -> string
@@ -501,8 +501,9 @@ module Socket = struct
       }
 
   let on_noop socket =
-    (* TODO: on the polling transport, the server sends a NOOP after we send a
-    CLOSE. Check this is the same on the websocket transport (probably not). *)
+    (* TODO: On the polling transport, the server sends a NOOP after we send a
+       CLOSE. Check that the same is true of the websocket transport (probably
+       not). *)
     match socket.ready_state with
     | Closing -> on_close socket
     | _ -> Lwt.return socket
@@ -510,6 +511,10 @@ module Socket = struct
   let process_packet : t -> Packet.t -> t Lwt.t =
     fun socket (packet_type, packet_data) ->
       Lwt.(
+        Lwt_io.printlf "process_packet %s"
+          (packet_type
+           |> Packet.string_of_packet_type
+           |> String.uppercase_ascii) >>= fun () ->
         match packet_type with
         | Packet.OPEN -> on_open socket packet_data
         | Packet.PONG -> on_pong socket
@@ -560,7 +565,7 @@ module Socket = struct
           Transport.receive socket.transport >>= fun packets ->
           Lwt_stream.iter (fun packet -> push_packet_recv (Some packet)) packets
         in
-        let maybe_renew_poll_promise poll_promise socket =
+        let maybe_poll_again poll_promise socket =
           match socket.ready_state, is_sleeping poll_promise with
           | Closed, _ (* socket closed, don't renew *)
           | _, true -> poll_promise (* still polling, don't renew *)
@@ -638,11 +643,12 @@ module Socket = struct
         in
         let rec maintain_connection poll_promise user_promise socket  =
           log_socket_state socket >>= fun () ->
-          let poll_promise = maybe_renew_poll_promise poll_promise socket in
+          let poll_promise = maybe_poll_again poll_promise socket in
           let sleep_promise =
             pick
               (List.concat
-                 [ Util.Option.value_map socket.handshake
+                 [ (* If we're connected, wake up for pings. *)
+                   Util.Option.value_map socket.handshake
                      ~default:[]
                      ~f:(fun handshake -> [sleep_until_ping socket handshake])
                  ; [ sleep_until_packet_received ()
@@ -666,7 +672,9 @@ module Socket = struct
           maybe_send_ping socket >>= fun socket ->
           write socket (Lwt_stream.get_available packets_send_stream) >>= fun () ->
           match socket.ready_state with
-          | Closed -> user_promise
+          | Closed ->
+            Lwt_io.printl "Socket is Closed, now waiting for user promise." >>= fun () ->
+            user_promise
           | _ -> maintain_connection poll_promise user_promise socket
         in
         let socket = create uri in
@@ -697,8 +705,8 @@ let main () =
         (fun packets send ->
            let react = function
              | Some (packet_type, _) ->
-               Lwt_io.printlf "-- User got a packet '%s'!"
-                 (Packet.string_of_packet_type packet_type)
+               Lwt_io.printlf "-- User got a packet %s!"
+                 (Packet.string_of_packet_type packet_type |> String.uppercase_ascii)
              | None ->
                Lwt_io.printl "End of packet stream?" >>= fun () ->
                Lwt.fail Exit
