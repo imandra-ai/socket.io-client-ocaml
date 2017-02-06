@@ -134,6 +134,20 @@ module Parser = struct
     | [] ->
       (Packet.ERROR, Packet.P_String "Empty packet")
 
+  let decode_packet_string : string -> Packet.t =
+    fun input ->
+      input
+      |> Stringext.to_list
+      |> List.map Char.code
+      |> decode_packet true
+
+  let decode_packet_binary : string -> Packet.t =
+    fun input ->
+      input
+      |> Stringext.to_list
+      |> List.map Char.code
+      |> decode_packet false
+
   let decode_payload_as_binary : string -> Packet.t list =
     fun string ->
       let decode_payload is_string payload_length codes =
@@ -271,8 +285,6 @@ module Transport = struct
 
     type t =
       { ready_state : ready_state
-      ; polling : bool
-      ; writeable : bool
       ; uri : Uri.t
       }
 
@@ -280,8 +292,6 @@ module Transport = struct
 
     let create uri =
       { ready_state = Closed
-      ; polling = false
-      ; writeable = false
       ; uri =
           Uri.add_query_param uri ("transport", [name])
       }
@@ -293,20 +303,6 @@ module Transport = struct
          | Packet.P_None -> "no data"
          | Packet.P_String string -> string
          | Packet.P_Binary codes -> Format.sprintf "binary packet_data of length %i" (List.length codes))
-
-    let process_packet : t -> Packet.t -> t =
-      fun t (packet_type, packet_data) ->
-        let t =
-          match t.ready_state with
-          | Opening -> { t with
-                         ready_state = Open
-                       ; writeable = true
-                       }
-          | _ -> t
-        in
-        match packet_type with
-        | Packet.CLOSE -> { t with ready_state = Closed }
-        | _ -> t
 
     let process_response : Cohttp_lwt_unix.Response.t * Cohttp_lwt_body.t -> Packet.t Lwt_stream.t Lwt.t =
       fun (resp, body) ->
@@ -334,7 +330,6 @@ module Transport = struct
     let do_poll : t -> Packet.t Lwt_stream.t Lwt.t =
       fun t ->
         Lwt.(
-          let t = { t with polling = true } in
           Cohttp.(Cohttp_lwt_unix.(
               Lwt_log.debug_f ~section "GET '%s'" (Uri.to_string t.uri) >>= fun () ->
               catch
@@ -376,25 +371,8 @@ module Transport = struct
                 | exn -> fail exn)
           )))
 
-    let open' : t -> (t * Packet.t Lwt_stream.t) Lwt.t =
-      fun t ->
-        Lwt.(
-          match t.ready_state with
-          | Closed ->
-            let t =
-              { t with
-                ready_state = Opening
-              }
-            in
-            do_poll t >>= fun packets ->
-            return (t, packets)
-          | _ ->
-            Lwt.fail_with "open: transport is not Closed"
-        )
-
     let on_open t handshake =
-      { t with
-        ready_state = Open
+      { ready_state = Open
       ; uri =
           t.uri
           |> (Util.flip Uri.remove_query_param) "sid"
@@ -402,8 +380,7 @@ module Transport = struct
       }
 
     let on_close t =
-      { t with
-        ready_state = Closed
+      { ready_state = Closed
       ; uri =
           t.uri
           |> (Util.flip Uri.remove_query_param) "sid"
@@ -477,12 +454,6 @@ module Socket = struct
     ; ping_sent_at = None
     ; pong_received_at = None
     }
-
-  let open' : Uri.t -> (t * Packet.t Lwt_stream.t) Lwt.t =
-    fun uri ->
-      let socket = create uri in
-      Transport.open' socket.transport >>= fun (transport, packets) ->
-      Lwt.return ({ socket with transport = transport }, packets)
 
   let write : t -> Packet.t list -> unit Lwt.t =
     fun socket packets ->
