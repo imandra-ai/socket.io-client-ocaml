@@ -42,6 +42,12 @@ module Util = struct
         | Some x -> Some (f x)
         | None -> None
 
+    let iter : f:('a -> unit) -> 'a option -> unit =
+      fun ~f ->
+        function
+        | Some x -> f x
+        | None -> ()
+
     let value : default:'a -> 'a option -> 'a =
       fun ~default ->
         function
@@ -316,15 +322,22 @@ module Transport = struct
     type t =
       { ready_state : ready_state
       ; uri : Uri.t
+      ; packets : Packet.t Lwt_stream.t
+      ; push_packet : Packet.t option -> unit
       }
 
     let name : string = "polling"
 
     let create : Uri.t -> t =
       fun uri ->
+        let packets, push_packet = Lwt_stream.create () in
         { ready_state = Closed
         ; uri =
             Uri.add_query_param uri ("transport", [name])
+        ; packets =
+            packets
+        ; push_packet =
+            push_packet
         }
 
     let log_packet : Packet.packet_type * Packet.packet_data -> unit Lwt.t =
@@ -336,8 +349,8 @@ module Transport = struct
            | Packet.P_String string -> string
            | Packet.P_Binary codes -> Format.sprintf "binary packet_data of length %i" (List.length codes))
 
-    let process_response : Cohttp_lwt_unix.Response.t * Cohttp_lwt_body.t -> Packet.t list Lwt.t =
-      fun (resp, body) ->
+    let process_response : t -> Cohttp_lwt_unix.Response.t * Cohttp_lwt_body.t -> unit Lwt.t =
+      fun t (resp, body) ->
         Cohttp.(Cohttp_lwt_unix.(
             let code =
               resp
@@ -348,21 +361,22 @@ module Transport = struct
               Cohttp_lwt_body.to_string_list body
               >>= Lwt_list.map_s
                 (fun line ->
-                   Lwt_log.debug_f ~section "Got body line: '%s'" (String.escaped line) >>= fun () ->
+                   Lwt_log.debug_f ~section "Got line in body: '%s'" (String.escaped line) >>= fun () ->
                    let packets = Parser.decode_payload_as_binary line in
                    Lwt_list.iter_s log_packet packets >>= fun () ->
                    Lwt.return packets)
               >>= fun packets_list ->
               let packets = List.concat packets_list in
               log_receive_packets ~section packets >>= fun () ->
-              Lwt.return packets
+              List.iter (fun packet -> t.push_packet (Some packet)) packets;
+              Lwt.return_unit
             else
               Cohttp_lwt_body.to_string body >>= fun body ->
               Lwt_log.error_f ~section "%s" body >>= fun () ->
               Lwt.fail_with (Format.sprintf "Bad response status: %i" code)
           ))
 
-    let receive : t -> Packet.t list Lwt.t =
+    let receive : t -> unit Lwt.t =
       fun t ->
         Lwt.(
           Cohttp.(Cohttp_lwt_unix.(
@@ -371,12 +385,11 @@ module Transport = struct
                 (fun () ->
                    Client.get
                      ~headers:(Header.init_with "accept" "application/json")
-                     t.uri >>= process_response
+                     t.uri >>= process_response t
                 )
                 (function
                   | Failure msg ->
-                    Lwt_log.error_f ~section "Poll failed: '%s'" msg >>= fun () ->
-                    return ([])
+                    Lwt_log.error_f ~section "Poll failed: '%s'" msg
                   | exn -> fail exn)
             ))
         )
@@ -409,7 +422,8 @@ module Transport = struct
 
     let on_open : t -> Parser.handshake -> t =
       fun t handshake ->
-        { ready_state = Open
+        { t with
+          ready_state = Open
         ; uri =
             t.uri
             |> (Util.flip Uri.remove_query_param) "sid"
@@ -418,7 +432,8 @@ module Transport = struct
 
     let on_close : t -> t =
       fun t ->
-        { ready_state = Closed
+        { t with
+          ready_state = Closed
         ; uri =
             t.uri
             |> (Util.flip Uri.remove_query_param) "sid"
@@ -440,16 +455,20 @@ module Transport = struct
       { ready_state : ready_state
       ; uri : Uri.t
       ; connection : ((unit -> Frame.t Lwt.t) * (Frame.t -> unit Lwt.t)) option
+      ; packets : Packet.t Lwt_stream.t
+      ; push_packet : Packet.t option -> unit
       }
 
     let name : string = "websocket"
 
     let create : Uri.t -> t =
       fun uri ->
+        let packets, push_packet = Lwt_stream.create () in
         { ready_state = Closed
-        ; uri =
-            Uri.add_query_param uri ("transport", [name])
+        ; uri = Uri.add_query_param uri ("transport", [name])
         ; connection = None
+        ; packets = packets
+        ; push_packet = push_packet
         }
 
     let open_ : t -> t Lwt.t =
@@ -482,13 +501,13 @@ module Transport = struct
             (fun packet ->
                send (Frame.create ~content:(Parser.encode_packet packet) ()))
 
-    let receive : t -> Packet.t list Lwt.t =
+    let receive : t -> unit Lwt.t =
       fun t ->
         match (t.ready_state, t.connection) with
         | Closed, _
         | _, None ->
           Lwt_log.info ~section "Receive attempt with no connection." >>= fun () ->
-          Lwt.return_nil
+          Lwt.return_unit
         | _, Some (recv, send) ->
           let react frame =
             Frame.(
@@ -497,38 +516,40 @@ module Transport = struct
               match frame.opcode with
               | Opcode.Text ->
                 let packet = Parser.decode_packet_string frame.content in
-                Lwt.return [packet]
+                Lwt.return_some packet
               | Opcode.Binary ->
                 let packet = Parser.decode_packet_binary frame.content in
-                Lwt.return [packet]
+                Lwt.return_some packet
               | Opcode.Ping ->
                 send (Frame.create ~opcode:Opcode.Pong ()) >>= fun () ->
-                Lwt.return_nil
+                Lwt.return_none
               | Opcode.Pong ->
-                Lwt.return_nil
+                Lwt.return_none
               | Opcode.Close ->
                 (* Translate Websocket Close frame into an Engine.io Close packet. *)
-                Lwt.return
-                  [( Packet.CLOSE
+                Lwt.return_some
+                  ( Packet.CLOSE
                    , Packet.P_Binary
                        (frame.content |> Stringext.to_list |> List.map Char.code)
-                   )]
+                   )
               | _ ->
                 Lwt_log.error_f ~section "Unexpected frame %s"
                   (Frame.show frame) >>= fun () ->
-                Lwt.return_nil
+                Lwt.return_none
             )
           in
           Lwt.catch
-            (fun () -> recv () >>= react >>= fun packets ->
-              log_receive_packets ~section packets >>= fun () ->
-              Lwt.return packets
+            (fun () -> recv () >>= react >>= fun packet_opt ->
+              log_receive_packets ~section (Util.Option.to_list packet_opt) >>= fun () ->
+              let () = Util.Option.iter ~f:(fun packet -> t.push_packet (Some packet)) packet_opt in
+              Lwt.return_unit
             )
             (fun exn -> Lwt_log.error_f ~section "receive" >>= fun () -> Lwt.fail exn)
 
     let on_close : t -> t =
       fun t ->
-        { ready_state = Closed
+        { t with
+          ready_state = Closed
         ; connection = None
         ; uri =
             t.uri
@@ -586,7 +607,14 @@ module Transport = struct
     | WebSocket websocket ->
       WebSocket (WebSocket.on_close websocket)
 
-  let receive : t -> Packet.t list Lwt.t =
+  let packet_stream : t -> Packet.t Lwt_stream.t =
+    function
+    | Polling polling ->
+      Polling.(polling.packets)
+    | WebSocket websocket ->
+      WebSocket.(websocket.packets)
+
+  let receive : t -> unit Lwt.t =
     function
     | Polling polling ->
       Polling.receive polling
@@ -614,10 +642,13 @@ module Socket = struct
     ; pong_received_at : float option
     ; uri : Uri.t
     ; probe_promise : Transport.t option Lwt.t option
+    ; packets : Packet.t Lwt_stream.t
+    ; push_packet : Packet.t option -> unit
     }
 
   let create : Uri.t -> t =
     fun uri ->
+      let packets, push_packet = Lwt_stream.create () in
       let uri =
         Uri.with_query uri [("EIO", [string_of_int Parser.protocol])]
       in
@@ -629,6 +660,8 @@ module Socket = struct
       ; pong_received_at = None
       ; uri = uri
       ; probe_promise = None
+      ; packets = packets
+      ; push_packet = push_packet
       }
 
   let write : t -> Packet.t list -> unit Lwt.t =
@@ -645,22 +678,17 @@ module Socket = struct
         create uri
         |> open_ >>= fun websocket ->
         Lwt_log.notice ~section "Probing websocket transport..." >>= fun () ->
-        Lwt_unix.sleep 5. >>= fun () -> (* TODO: remove me *)
         write websocket [(Packet.PING, Packet.P_String "probe")] >>= fun () ->
-        receive websocket >>= fun packets ->
-        (match packets with
-         | [(Packet.PONG, Packet.P_String "probe")] ->
+        receive websocket >>= fun () ->
+        (Lwt_stream.get websocket.packets >>= function
+         | Some (Packet.PONG, Packet.P_String "probe") ->
            Lwt_log.notice ~section "Ok to upgrade." >>= fun () ->
-           write websocket [(Packet.UPGRADE, Packet.P_None)] >>= fun () ->
            Lwt.return (Some (Transport.WebSocket websocket))
-         | (packet_type, packet_data) :: rest ->
+         | Some (packet_type, packet_data) ->
            Lwt_log.error_f ~section "Can not upgrade. Expecting PONG, but got '%s'."
              (Packet.string_of_packet_type packet_type) >>= fun () ->
-           (match rest with
-            | [] -> Lwt.return_unit
-            | _ -> Lwt_log.error ~section "Received more packets than expected.") >>= fun () ->
            Lwt.return_none
-         | [] ->
+         | None ->
            Lwt_log.error ~section "Can not upgrade. Expecting PONG, but didn't get a Packet." >>= fun () ->
            Lwt.return_none)
       else
@@ -710,6 +738,7 @@ module Socket = struct
         (packet_type
          |> Packet.string_of_packet_type
          |> String.uppercase_ascii) >>= fun () ->
+      let () = socket.push_packet (Some (packet_type, packet_data)) in
       match packet_type with
       | Packet.OPEN -> on_open socket packet_data
       | Packet.PONG -> on_pong socket
@@ -743,28 +772,20 @@ module Socket = struct
   let with_connection : 'a. Uri.t -> ((Packet.t Lwt_stream.t) -> (string -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t =
     fun uri f ->
       (* packets to send via transport *)
-      let (packets_send_stream, push_packet_send) = Lwt_stream.create () in
-      (* packets received over transport *)
-      let (packets_recv_stream, push_packet_recv) = Lwt_stream.create () in
+      let (packets_send_stream, push_packet_send) =
+        Lwt_stream.create () in
       let send packet =
-        push_packet_send (Some packet); Lwt.return_unit
-      in
-      let poll_once socket =
-        Lwt_log.debug_f ~section "polling..." >>= fun () ->
-        Transport.receive socket.transport >>= fun packets ->
-        List.iter (fun packet -> push_packet_recv (Some packet)) packets;
-        Lwt.return_unit
-      in
+        push_packet_send (Some packet); Lwt.return_unit in
       let maybe_poll_again poll_promise socket =
         match socket.ready_state, Lwt.is_sleeping poll_promise with
         | Closed, _ (* socket closed, don't renew *)
         | _, true -> poll_promise (* still polling, don't renew *)
-        | _ -> poll_once socket (* poll again *)
+        | _ -> Transport.receive socket.transport (* poll again *)
       in
       let sleep_until_ping socket handshake =
         match socket.ping_sent_at, socket.pong_received_at with
         | None, _ ->
-          Lwt_log.debug ~section "no ping_sent_at: send ping now"
+          Lwt_log.info ~section "No ping sent: send ping now"
         | Some ping_sent_at, None ->
           (* We are waiting for PONG from server. Raise Timeout if we
              don't get it in time. *)
@@ -774,7 +795,7 @@ module Socket = struct
             (float_of_int Parser.(handshake.ping_timeout)) /. 1000.0 in
           let timeout_seconds =
             ping_timeout_seconds -. seconds_since_last_ping in
-          Lwt_log.debug_f ~section "Waiting %.2f seconds for PONG" timeout_seconds >>= fun () ->
+          Lwt_log.info_f ~section "Waiting %.2f seconds for PONG" timeout_seconds >>= fun () ->
           Lwt_unix.timeout timeout_seconds
         | _, Some pong_received_at ->
           (* All good, send a PING at the next interval. *)
@@ -784,9 +805,9 @@ module Socket = struct
             (float_of_int Parser.(handshake.ping_interval)) /. 1000.0 in
           let sleep_seconds =
             ping_interval_seconds -. seconds_since_last_pong in
-          Lwt_log.debug_f ~section "Will ping in %.2f seconds" sleep_seconds >>= fun () ->
+          Lwt_log.info_f ~section "Will ping in %.2f seconds" sleep_seconds >>= fun () ->
           Lwt_unix.sleep sleep_seconds >>= fun () ->
-          Lwt_log.debug ~section "Waking to send ping"
+          Lwt_log.info ~section "Waking to send ping"
       in
       let maybe_send_ping socket =
         let should_ping =
@@ -812,13 +833,13 @@ module Socket = struct
         else
           Lwt.return socket
       in
-      let sleep_until_packet_received () =
-        Lwt_stream.peek packets_recv_stream >>= fun _ ->
-        Lwt_log.debug ~section "Waking to process a packet"
+      let sleep_until_packet_received socket =
+        Lwt_stream.peek (Transport.packet_stream socket.transport) >>= fun _ ->
+        Lwt_log.info ~section "Waking to process a packet"
       in
       let sleep_until_packet_to_send () =
         Lwt_stream.peek packets_send_stream >>= fun _ ->
-        Lwt_log.debug ~section "Waking to send a packet"
+        Lwt_log.info ~section "Waking to send a packet"
       in
       let maybe_close socket user_promise =
         if Lwt.is_sleeping user_promise then
@@ -831,16 +852,23 @@ module Socket = struct
       let maybe_switch_transports socket =
         match socket.probe_promise with
         | Some promise when not (Lwt.is_sleeping promise) ->
-          (* TODO: Ignore the close message on the old transport after upgrading. *)
           promise >>= fun transport_opt ->
           let socket =
             { socket with
-              transport = Util.Option.value ~default:socket.transport transport_opt
-            ; probe_promise = None
+              probe_promise = None
             }
           in
-          write socket [(Packet.UPGRADE, Packet.P_None)] >>= fun () ->
-          Lwt.return socket
+          (match transport_opt with
+           | Some transport ->
+             let socket =
+               { socket with
+                 transport =
+                   Util.Option.value ~default:socket.transport transport_opt
+               }
+             in
+             write socket [(Packet.UPGRADE, Packet.P_None)] >>= fun () ->
+             Lwt.return socket
+           | None -> Lwt.return socket)
         | _ -> Lwt.return socket
       in
       let rec maintain_connection : 'a. unit Lwt.t -> 'a Lwt.t -> t -> 'a Lwt.t =
@@ -856,7 +884,7 @@ module Socket = struct
                     | Closed, _
                     | _, None -> []
                     | _, Some handshake -> [sleep_until_ping socket handshake])
-                 ; [ sleep_until_packet_received ()
+                 ; [ sleep_until_packet_received socket
                    ; sleep_until_packet_to_send ()
                    ]
                  ])
@@ -876,7 +904,7 @@ module Socket = struct
           Lwt_list.fold_left_s
             process_packet
             socket
-            (Lwt_stream.get_available packets_recv_stream) >>= fun socket ->
+            (Lwt_stream.get_available (Transport.packet_stream socket.transport)) >>= fun socket ->
           maybe_close socket user_promise >>= fun socket ->
           maybe_send_ping socket >>= fun socket ->
           write socket (Lwt_stream.get_available packets_send_stream) >>= fun () ->
@@ -887,9 +915,9 @@ module Socket = struct
           | _ -> maintain_connection poll_promise user_promise socket
       in
       let socket = create uri in
-      let poll_promise = poll_once socket in
+      let poll_promise = Transport.receive socket.transport in
       let user_promise =
-        f (Lwt_stream.clone packets_recv_stream)
+        f socket.packets
           (fun data -> send (Packet.MESSAGE, Packet.P_String data))
       in
       maintain_connection poll_promise user_promise socket

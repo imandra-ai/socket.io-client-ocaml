@@ -10,6 +10,7 @@ var server = engine.listen(3001, {allowUpgrades: true});
 
 server.on('connection', function(socket){
     console.log('new connection', socket.id);
+    socket.send('you connected!');
     setTimeout(function() {socket.send('you connected not long ago');}, 1000);
     // socket.send('utf 8 string');
     // socket.send(new Buffer([0, 1, 2, 3, 4, 5])); // binary data
