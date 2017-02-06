@@ -613,6 +613,7 @@ module Socket = struct
     ; ping_sent_at : float option
     ; pong_received_at : float option
     ; uri : Uri.t
+    ; probe_promise : Transport.t option Lwt.t option
     }
 
   let create : Uri.t -> t =
@@ -627,6 +628,7 @@ module Socket = struct
       ; ping_sent_at = None
       ; pong_received_at = None
       ; uri = uri
+      ; probe_promise = None
       }
 
   let write : t -> Packet.t list -> unit Lwt.t =
@@ -636,14 +638,14 @@ module Socket = struct
       | _, [] -> Lwt.return_unit
       | _, _ -> Transport.write socket.transport packets
 
-  let probe : t -> Transport.t option Lwt.t =
-    fun socket ->
-      match socket.handshake with
-      | Some handshake when List.exists ((=) Transport.WebSocket.name) Parser.(handshake.upgrades) ->
+  let probe : Uri.t -> Parser.handshake -> Transport.t option Lwt.t =
+    fun uri handshake ->
+      if List.exists ((=) Transport.WebSocket.name) Parser.(handshake.upgrades) then
         let open Transport.WebSocket in
-        create socket.uri
+        create uri
         |> open_ >>= fun websocket ->
         Lwt_log.notice ~section "Probing websocket transport..." >>= fun () ->
+        Lwt_unix.sleep 5. >>= fun () -> (* TODO: remove me *)
         write websocket [(Packet.PING, Packet.P_String "probe")] >>= fun () ->
         receive websocket >>= fun packets ->
         (match packets with
@@ -661,33 +663,25 @@ module Socket = struct
          | [] ->
            Lwt_log.error ~section "Can not upgrade. Expecting PONG, but didn't get a Packet." >>= fun () ->
            Lwt.return_none)
-      | _ -> Lwt.return_none
+      else
+        Lwt.return_none
 
   let on_open : t -> Packet.packet_data -> t Lwt.t =
     fun socket packet_data ->
       let handshake = Parser.parse_handshake packet_data in
       Lwt_log.debug_f ~section "Got sid '%s'" Parser.(handshake.sid) >>= fun () ->
       let transport =
-        Transport.on_open socket.transport handshake
-      in
-      let socket =
+        Transport.on_open socket.transport handshake in
+      let uri =
+        Uri.add_query_param' socket.uri ("sid", Parser.(handshake.sid)) in
+      Lwt.return
         { socket with
           ready_state = Open
         ; handshake = Some handshake
         ; transport = transport
-        ; uri =
-            Uri.add_query_param' socket.uri ("sid", Parser.(handshake.sid))
+        ; uri = uri
+        ; probe_promise = Some (probe uri handshake)
         }
-      in
-      (* TODO: run the probe in parallel *)
-      probe socket >>= function
-      | None ->
-        Lwt.return socket
-      | Some transport ->
-        Lwt.return
-          { socket with
-            transport = transport
-          }
 
   let on_pong : t -> t Lwt.t =
     fun socket ->
@@ -834,9 +828,25 @@ module Socket = struct
           Lwt_log.debug ~section "User thread has finished; closing the socket." >>= fun () ->
           close socket
       in
+      let maybe_switch_transports socket =
+        match socket.probe_promise with
+        | Some promise when not (Lwt.is_sleeping promise) ->
+          (* TODO: Ignore the close message on the old transport after upgrading. *)
+          promise >>= fun transport_opt ->
+          let socket =
+            { socket with
+              transport = Util.Option.value ~default:socket.transport transport_opt
+            ; probe_promise = None
+            }
+          in
+          write socket [(Packet.UPGRADE, Packet.P_None)] >>= fun () ->
+          Lwt.return socket
+        | _ -> Lwt.return socket
+      in
       let rec maintain_connection : 'a. unit Lwt.t -> 'a Lwt.t -> t -> 'a Lwt.t =
         fun poll_promise user_promise socket ->
           log_socket_state socket >>= fun () ->
+          (* maybe_switch_transports socket >>= fun socket -> *)
           let poll_promise = maybe_poll_again poll_promise socket in
           let sleep_promise =
             Lwt.pick
@@ -854,11 +864,15 @@ module Socket = struct
           Lwt.choose
             (List.concat
                [ if Lwt.is_sleeping user_promise then [user_promise >>= fun _ -> Lwt.return_unit] else []
+               ; socket.probe_promise
+                 |> Util.Option.map ~f:(fun p -> p >>= fun _ -> Lwt.return_unit)
+                 |> Util.Option.to_list
                ; [ poll_promise
                  ; sleep_promise
                  ]
                ]) >>= fun () ->
           let () = Lwt.cancel sleep_promise in
+          maybe_switch_transports socket >>= fun socket ->
           Lwt_list.fold_left_s
             process_packet
             socket
