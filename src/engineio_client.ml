@@ -439,44 +439,44 @@ module Transport = struct
 
     let receive : t -> Packet.t list Lwt.t =
       fun t ->
-      match (t.ready_state, t.connection) with
-      | Closed, _
-      | _, None ->
-        Lwt_log.info ~section "Receive attempt with no connection." >>= fun () ->
-        Lwt.return_nil
-      | _, Some (recv, send) ->
-        let react frame =
-          Frame.(
-            Lwt_log.debug_f ~section "Received frame %s"
-              (Frame.show frame |> Stringext.replace_all ~pattern:"\n  " ~with_:" ") >>= fun () ->
-            match frame.opcode with
-            | Opcode.Text ->
-              let packet = Parser.decode_packet_string frame.content in
-              Lwt.return [packet]
-            | Opcode.Binary ->
-              let packet = Parser.decode_packet_binary frame.content in
-              Lwt.return [packet]
-            | Opcode.Ping ->
-              send (Frame.create ~opcode:Opcode.Pong ()) >>= fun () ->
-              Lwt.return_nil
-            | Opcode.Pong ->
-              Lwt.return_nil
-            | Opcode.Close ->
-              (* Translate Websocket Close frame into an Engine.io Close packet. *)
-              Lwt.return
-                [( Packet.CLOSE
-                 , Packet.P_Binary
-                     (frame.content |> Stringext.to_list |> List.map Char.code)
-                 )]
-            | _ ->
-              Lwt_log.error_f ~section "Unexpected frame %s"
-                (Frame.show frame) >>= fun () ->
-              Lwt.return_nil
-          )
-        in
-        Lwt.catch
-          (fun () -> recv () >>= react)
-          (fun exn -> Lwt_log.error_f ~section "receive" >>= fun () -> Lwt.fail exn)
+        match (t.ready_state, t.connection) with
+        | Closed, _
+        | _, None ->
+          Lwt_log.info ~section "Receive attempt with no connection." >>= fun () ->
+          Lwt.return_nil
+        | _, Some (recv, send) ->
+          let react frame =
+            Frame.(
+              Lwt_log.debug_f ~section "Received frame %s"
+                (Frame.show frame |> Stringext.replace_all ~pattern:"\n  " ~with_:" ") >>= fun () ->
+              match frame.opcode with
+              | Opcode.Text ->
+                let packet = Parser.decode_packet_string frame.content in
+                Lwt.return [packet]
+              | Opcode.Binary ->
+                let packet = Parser.decode_packet_binary frame.content in
+                Lwt.return [packet]
+              | Opcode.Ping ->
+                send (Frame.create ~opcode:Opcode.Pong ()) >>= fun () ->
+                Lwt.return_nil
+              | Opcode.Pong ->
+                Lwt.return_nil
+              | Opcode.Close ->
+                (* Translate Websocket Close frame into an Engine.io Close packet. *)
+                Lwt.return
+                  [( Packet.CLOSE
+                   , Packet.P_Binary
+                       (frame.content |> Stringext.to_list |> List.map Char.code)
+                   )]
+              | _ ->
+                Lwt_log.error_f ~section "Unexpected frame %s"
+                  (Frame.show frame) >>= fun () ->
+                Lwt.return_nil
+            )
+          in
+          Lwt.catch
+            (fun () -> recv () >>= react)
+            (fun exn -> Lwt_log.error_f ~section "receive" >>= fun () -> Lwt.fail exn)
 
     let on_close t =
       { ready_state = Closed
