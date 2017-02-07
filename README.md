@@ -15,9 +15,9 @@ opam pin add engineio-client https://github.com/AestheticIntegration/ocaml-engin
 
 ## Usage
 
-See `examples/engineio/client.ml`
+See `examples/engineio/client.ml` and https://aestheticintegration.github.io/ocaml-engineio-client.
 
-## Develop
+## Development
 
 Requires `opam`.
 
@@ -38,8 +38,6 @@ make example-engineio-client
 ```
 
 ## Documentation
-
-Documentation is available at https://aestheticintegration.github.io/ocaml-engineio-client.
 
 To generate the documenation (requires `topkg-care` from `opam`):
 
