@@ -47,3 +47,15 @@ To generate the documenation (requires `topkg-care` from `opam`):
 opam install topkg-care
 make doc
 ```
+
+To publish the generated documentation:
+
+```
+git checkout gh-pages
+rm *.html *.stamp *.css
+mv _build/doc/api.docdir/* .
+rm -rf _build
+git add .
+git commit -m "Re-generate docs."
+git push origin gh-pages
+```
