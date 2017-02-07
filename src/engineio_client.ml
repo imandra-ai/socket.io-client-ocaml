@@ -785,10 +785,19 @@ module Socket = struct
               Transport.WebSocket.(websocket.ready_state)))
         (Transport.string_of_t socket.transport)
 
+  let is_upgrading socket =
+    match socket.probe_promise with
+    | Some probe ->
+      (match Lwt.state probe with
+       | Lwt.Return (Some transport) -> true
+       | _ -> false)
+    | _ -> false
+
   let maybe_poll_again poll_promise socket =
-    match socket.ready_state, Lwt.is_sleeping poll_promise with
-    | Closed, _ (* socket closed, don't renew *)
-    | _, true -> poll_promise (* still polling, don't renew *)
+    match socket.ready_state, Lwt.is_sleeping poll_promise, is_upgrading socket with
+    | Closed, _, _ (* socket closed, don't renew *)
+    | _, _, true (* transport will upgrade this cycle, don't renew *)
+    | _, true, _ -> poll_promise (* still polling, don't renew *)
     | _ -> Transport.receive socket.transport (* poll again *)
 
   let sleep_until_ping socket handshake =
