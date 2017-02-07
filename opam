@@ -5,7 +5,7 @@ maintainer: "Matt Bray <mattjbray@gmail.com>"
 authors: "Matt Bray <mattjbray@gmail.com>"
 homepage: "https://github.com/AestheticIntegration/ocaml-engineio-client"
 bug-reports: "https://github.com/AestheticIntegration/ocaml-engineio-client/issues"
-license: "MIT"
+license: "APACHE-2.0"
 dev-repo: "https://github.com/AestheticIntegration/ocaml-engineio-client"
 build: [
   [ "ocaml" "pkg/pkg.ml" "build" "--pinned" "%{pinned}%" ]
