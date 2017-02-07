@@ -15,6 +15,7 @@ examples:
 .PHONY: examples-setup
 examples-setup:
 	cd examples/engineio && npm install
+	cd examples/socketio && npm install
 
 .PHONY: example-engineio-server
 example-engineio-server:
@@ -23,6 +24,14 @@ example-engineio-server:
 .PHONY: example-engineio-client
 example-engineio-client: examples
 	./_build/examples/engineio/client.native
+
+.PHONY: example-socketio-server
+example-socketio-server:
+	cd examples/socketio && DEBUG=engine*,socket.io* node index.js
+
+.PHONY: example-socketio-client
+example-socketio-client: examples
+	./_build/examples/socketio/client.native
 
 .PHONY: dev-setup
 dev-setup:

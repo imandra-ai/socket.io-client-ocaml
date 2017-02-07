@@ -16,4 +16,5 @@ let () =
   Ok [ Pkg.mllib "src/engineio_client.mllib"
      ; Pkg.test ~dir:"src" "test/main"
      ; Pkg.bin ~cond:examples "examples/engineio/client"
+     ; Pkg.bin ~cond:examples "examples/socketio/client"
      ]
