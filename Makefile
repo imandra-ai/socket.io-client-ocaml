@@ -10,6 +10,10 @@ test:
 examples:
 	ocaml pkg/pkg.ml build --build-examples true
 
+.PHONY: examples-setup
+examples-setup:
+	cd examples/engineio && npm install
+
 .PHONY: example-engineio-server
 example-engineio-server:
 	cd examples/engineio && DEBUG=engine* node index.js
