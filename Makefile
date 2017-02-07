@@ -26,3 +26,7 @@ example-engineio-client: examples
 dev-setup:
 	opam pin add . --no-action --yes
 	opam install engineio-client --deps-only
+
+.PHONY: doc
+doc:
+	topkg doc --reload-browser

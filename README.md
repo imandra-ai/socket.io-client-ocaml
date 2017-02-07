@@ -36,3 +36,12 @@ make examples-setup
 make example-engineio-server
 make example-engineio-client
 ```
+
+## Documentation
+
+Requires `topkg-care` from `opam`.
+
+```
+opam install topkg-care
+make doc
+```
