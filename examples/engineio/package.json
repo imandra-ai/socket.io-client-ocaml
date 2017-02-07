@@ -1,0 +1,10 @@
+{
+  "name": "engine-chat-example",
+  "version": "0.0.1",
+  "description": "my first engine.io app",
+  "dependencies": {
+    "engine.io": "^2.0.1",
+    "engine.io-client": "^2.0.1",
+    "express": "^4.10.2"
+  }
+}

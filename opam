@@ -1,5 +1,5 @@
 opam-version: "1.2"
-name: "ocaml-engineio-client"
+name: "engineio-client"
 version: "~unknown"
 maintainer: "Matt Bray <mattjbray@gmail.com>"
 authors: "Matt Bray <mattjbray@gmail.com>"
@@ -8,11 +8,8 @@ bug-reports: "https://github.com/AestheticIntegration/ocaml-engineio-client/issu
 license: "MIT"
 dev-repo: "https://github.com/AestheticIntegration/ocaml-engineio-client"
 build: [
-  ["./configure" "--prefix=%{prefix}%"]
-  [make]
+  [ "ocaml" "pkg/pkg.ml" "build" "--pinned" "%{pinned}%" ]
 ]
-install: [make "install"]
-remove: ["ocamlfind" "remove" "ocaml-engineio-client"]
 depends: [
   "ocamlfind" {build}
   "ocamlbuild" {build}

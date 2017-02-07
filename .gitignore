@@ -1,2 +1,3 @@
 _build
-ocaml-engineio-client.install
+engineio-client.install
+node_modules

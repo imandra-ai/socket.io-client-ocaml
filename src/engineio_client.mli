@@ -19,6 +19,8 @@ module Packet : sig
   val string_of_packet_type : packet_type -> string
   val packet_type_of_int : int -> packet_type
   val int_of_packet_type : packet_type -> int
+
+  val string_of_packet_data : packet_data -> string
 end
 
 module Socket : sig

@@ -7,3 +7,5 @@ true: package(websocket.lwt)
 true: package(yojson)
 
 <src>: include
+
+<**/node_modules>: -traverse
