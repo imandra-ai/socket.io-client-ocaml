@@ -25,4 +25,4 @@ example-engineio-client: examples
 .PHONY: dev-setup
 dev-setup:
 	opam pin add . --no-action --yes
-	opam install ocaml-engineio-client --deps-only
+	opam install engineio-client --deps-only
