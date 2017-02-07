@@ -645,6 +645,14 @@ module Transport = struct
     | WebSocket websocket ->
       WebSocket.(websocket.packets)
 
+  let push_packet : t -> Packet.t option -> unit =
+    fun t packet ->
+      match t with
+      | Polling polling ->
+        Polling.(polling.push_packet packet)
+      | WebSocket websocket ->
+        WebSocket.(websocket.push_packet packet)
+
   let receive : t -> unit Lwt.t =
     function
     | Polling polling ->
@@ -809,8 +817,22 @@ module Socket = struct
   let maybe_poll_again poll_promise socket =
     match socket.ready_state, Lwt.is_sleeping poll_promise, is_upgrading socket with
     | Closed, _, _ (* socket closed, don't renew *)
-    | _, _, true (* transport will upgrade this cycle, don't renew *)
     | _, true, _ -> poll_promise (* still polling, don't renew *)
+    | _, _, true ->
+      (* Transport will upgrade this cycle, don't renew.
+         Close the transport's packet stream when this poll has finished.
+
+         TODO: maybe better to just forward any packets received after this
+         final poll from here?
+      *)
+      let () = Lwt.async
+        (fun () ->
+           poll_promise >>= fun () ->
+           let () = Transport.push_packet socket.transport None in
+           Lwt.return_unit
+        )
+      in
+      poll_promise
     | _ -> Transport.receive socket.transport (* poll again *)
 
   let sleep_until_ping socket handshake =
@@ -880,6 +902,23 @@ module Socket = struct
       Lwt_log.debug ~section "User thread has finished; closing the socket." >>= fun () ->
       close socket
 
+  let forward_until_close old_transport socket =
+    let old_packet_stream = Transport.packet_stream old_transport in
+    let rec react_forever () =
+      Lwt_stream.get old_packet_stream >>= function
+      | None
+      | Some (Packet.CLOSE, _) ->
+        (* TODO: this is never reached, how to clean up?
+           We need to close the stream after the final poll.
+        *)
+        Lwt_log.debug "Finished forwarding packets."
+      | Some packet ->
+        Lwt_log.debug_f "Forwarding packet %s" (Packet.string_of_packet_type (fst packet)) >>= fun () ->
+        let () = Transport.push_packet socket.transport (Some packet) in
+        react_forever ()
+    in
+    react_forever ()
+
   let maybe_switch_transports socket =
     match socket.probe_promise with
     | Some promise when not (Lwt.is_sleeping promise) ->
@@ -891,13 +930,14 @@ module Socket = struct
       in
       (match transport_opt with
        | Some transport ->
+         let old_transport = socket.transport in
          let socket =
            { socket with
-             transport =
-               Util.Option.value ~default:socket.transport transport_opt
+             transport = transport
            }
          in
          write socket [Packet.upgrade] >>= fun () ->
+         let () = Lwt.async (fun () -> forward_until_close old_transport socket) in
          Lwt.return socket
        | None -> Lwt.return socket)
     | _ -> Lwt.return socket
@@ -954,15 +994,15 @@ module Socket = struct
                ]) >>= fun () ->
           (* Explicitly cancel the sleep promises. *)
           let () = Lwt.cancel sleep_promise in
-          (* If the upgrade probe was successful, complete the transport
-             upgrade. *)
-          maybe_switch_transports socket >>= fun socket ->
           (* Process packets receveived over the transport. *)
           Lwt_list.fold_left_s process_packet socket
             (Lwt_stream.get_available
                (Transport.packet_stream socket.transport)) >>= fun socket ->
           (* Close the socket if the user callback has returned. *)
           maybe_close socket user_promise >>= fun socket ->
+          (* If the upgrade probe was successful, complete the transport
+             upgrade. *)
+          maybe_switch_transports socket >>= fun socket ->
           (* Send a ping packet if we need to. *)
           maybe_send_ping socket send >>= fun socket ->
           (* Flush the queued packets to the transport. *)
