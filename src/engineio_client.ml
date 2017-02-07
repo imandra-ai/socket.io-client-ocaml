@@ -102,14 +102,14 @@ module Packet = struct
 
   let string_of_packet_type : packet_type -> string =
     function
-    | OPEN -> "open"
-    | CLOSE -> "close"
-    | PING -> "ping"
-    | PONG -> "pong"
-    | MESSAGE -> "message"
-    | UPGRADE -> "upgrade"
-    | NOOP -> "noop"
-    | ERROR -> "error"
+    | OPEN -> "OPEN"
+    | CLOSE -> "CLOSE"
+    | PING -> "PING"
+    | PONG -> "PONG"
+    | MESSAGE -> "MESSAGE"
+    | UPGRADE -> "UPGRADE"
+    | NOOP -> "NOOP"
+    | ERROR -> "ERROR"
 
   let packet_type_of_int : int -> packet_type =
     function
@@ -336,7 +336,6 @@ module Transport = struct
         (packets
          |> List.map fst
          |> List.map Packet.string_of_packet_type
-         |> List.map String.uppercase_ascii
          |> String.concat ", ")
 
   let log_write_packets : section:Lwt_log.section -> Packet.t list -> unit Lwt.t =
@@ -345,7 +344,6 @@ module Transport = struct
         (packets
          |> List.map fst
          |> List.map Packet.string_of_packet_type
-         |> List.map String.uppercase_ascii
          |> String.concat ", ")
 
   module Polling = struct
@@ -376,7 +374,7 @@ module Transport = struct
     let log_packet : Packet.t -> unit Lwt.t =
       fun (packet_type, packet_data) ->
         Lwt_log.debug_f ~section "Decoded packet %s with data: '%s'"
-          (Packet.string_of_packet_type packet_type |> String.uppercase_ascii)
+          (Packet.string_of_packet_type packet_type)
           (match packet_data with
            | Packet.P_None -> "no data"
            | Packet.P_String string -> string
@@ -768,9 +766,7 @@ module Socket = struct
   let process_packet : t -> Packet.t -> t Lwt.t =
     fun socket (packet_type, packet_data) ->
       Lwt_log.debug_f ~section "process_packet %s"
-        (packet_type
-         |> Packet.string_of_packet_type
-         |> String.uppercase_ascii) >>= fun () ->
+        (packet_type |> Packet.string_of_packet_type) >>= fun () ->
       let () = socket.push_packet (Some (packet_type, packet_data)) in
       match packet_type with
       | Packet.OPEN -> on_open socket packet_data
