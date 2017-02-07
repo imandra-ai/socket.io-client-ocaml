@@ -39,7 +39,9 @@ make example-engineio-client
 
 ## Documentation
 
-Requires `topkg-care` from `opam`.
+Documentation is available at https://aestheticintegration.github.io/ocaml-engineio-client.
+
+To generate the documenation (requires `topkg-care` from `opam`):
 
 ```
 opam install topkg-care
