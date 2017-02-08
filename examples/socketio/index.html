@@ -32,6 +32,9 @@
      });
      socket.on('pls respond', function(msg, fn) {
          fn('browser is responding to your msg: ' + msg);
+         socket.emit('pls respond too', "I'm needy too", function(answer) {
+             console.log('got an answer', answer);
+         });
      });
     </script>
   </body>

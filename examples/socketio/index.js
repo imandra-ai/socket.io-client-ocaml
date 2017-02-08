@@ -9,12 +9,17 @@ app.get('/', function(req, res){
 io.on('connection', function(socket){
     console.log('a user connected');
 
+    // Test client sending ACKs
     setTimeout(function() {
-        // Testing Acks
         socket.emit('pls respond', 'hello', function(answer) {
             console.log('got an answer', arguments);
         });
     }, 1000);
+
+    // Test client requesting ACKs
+    socket.on('pls respond too', function(msg, fn) {
+        fn('server is responding to your neediness: ' + msg);
+    });
 
     socket.on('chat message', function(msg){
         console.log('message: ' + msg);

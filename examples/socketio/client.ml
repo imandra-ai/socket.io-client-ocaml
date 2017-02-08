@@ -21,30 +21,43 @@ let main () =
   Socketio_client.(
     Socket.with_connection uri
       (fun packets send ->
-         let rec react_forever () =
+         let rec react_forever next_ack_id =
            Lwt_stream.get packets >>= function
            | Some packet ->
              Lwt_io.printlf "-- User got a packet! %s"
                (Packet.string_of_t packet) >>= fun () ->
+
              (match packet with
               | Packet.EVENT ("chat message", [`String content], _) ->
-                Lwt_io.printlf "got message: %s" content
+                Lwt_io.printlf "got message: %s" content >>= fun () ->
+                Lwt.return next_ack_id
+
               | Packet.EVENT ("pls respond", [`String content], Some ack_id) ->
                 Lwt_io.printlf "responding to ack request %i" ack_id >>= fun () ->
-                send (Packet.ACK ([`String (Printf.sprintf "OCaml is replying to your message: %s" content)], ack_id))
+                send (Packet.ACK ([`String (Printf.sprintf "OCaml is replying to your message: %s" content)], ack_id)) >>= fun () ->
+                send (Packet.EVENT ("pls respond too", [`String "I'm needy too"], Some next_ack_id)) >>= fun () ->
+                Lwt.return (next_ack_id + 1)
+
               | Packet.ERROR error ->
-                Lwt_io.printlf "got error: %s" error
-              | _ -> Lwt.return_unit) >>= react_forever
+                Lwt_io.printlf "got error: %s" error >>= fun () ->
+                Lwt.return next_ack_id
+
+              | _ -> Lwt.return next_ack_id)
+
+             >>= react_forever
+
            | None ->
              Lwt_io.printl "End of packet stream?" >>= fun () ->
              Lwt.fail Exit
          in
+
          let rec sendline () =
            Lwt_io.(read_line_opt stdin) >>= function
            | None -> Lwt_io.printl "Good-bye!"
            | Some content -> send (Packet.EVENT ("chat message", [`String content], None)) >>= sendline
          in
-         sendline () <?> react_forever ())
+
+         sendline () <?> react_forever 0)
   )
 
 let () =
