@@ -1,5 +1,12 @@
 open Lwt.Infix
 
+(* Still to implement:
+
+   - Re-connection, back-off, etc.
+   - Multiplexing: Connecting to and disconnecting from namespaces.
+   - Binary events/acks.
+*)
+
 module Packet = struct
   type t =
     | CONNECT
@@ -106,7 +113,7 @@ module Parser = struct
         ack_id
         (Yojson.Basic.to_string (`List data))
     | _ ->
-      "not implemented"
+      raise (Invalid_argument (Printf.sprintf "Encoding %s: not implemented" (Packet.string_of_t packet)))
 end
 
 module Socket = struct
