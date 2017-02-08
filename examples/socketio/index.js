@@ -8,6 +8,14 @@ app.get('/', function(req, res){
 
 io.on('connection', function(socket){
     console.log('a user connected');
+
+    setTimeout(function() {
+        // Testing Acks
+        socket.emit('pls respond', 'hello', function(answer) {
+            console.log('got an answer', arguments);
+        });
+    }, 1000);
+
     socket.on('chat message', function(msg){
         console.log('message: ' + msg);
         io.emit('chat message', msg);

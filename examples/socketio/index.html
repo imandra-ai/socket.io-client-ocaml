@@ -30,6 +30,9 @@
      socket.on('chat message', function(msg){
          $('#messages').append($('<li>').text(msg));
      });
+     socket.on('pls respond', function(msg, fn) {
+         fn('browser is responding to your msg: ' + msg);
+     });
     </script>
   </body>
 </html>
