@@ -835,33 +835,10 @@ module Socket = struct
               Transport.WebSocket.(websocket.ready_state)))
         (Transport.string_of_t socket.transport)
 
-  let is_upgrading socket =
-    match socket.probe_promise with
-    | Some probe ->
-      (match Lwt.state probe with
-       | Lwt.Return (Some transport) -> true
-       | _ -> false)
-    | _ -> false
-
   let maybe_poll_again poll_promise socket =
-    match socket.ready_state, Lwt.is_sleeping poll_promise, is_upgrading socket with
-    | Closed, _, _ (* socket closed, don't renew *)
-    | _, true, _ -> poll_promise (* still polling, don't renew *)
-    | _, _, true ->
-      (* Transport will upgrade this cycle, don't renew.
-         Close the transport's packet stream when this poll has finished.
-
-         TODO: maybe better to just forward any packets received after this
-         final poll from here?
-      *)
-      let () = Lwt.async
-        (fun () ->
-           poll_promise >>= fun () ->
-           let () = Transport.push_packet socket.transport None in
-           Lwt.return_unit
-        )
-      in
-      poll_promise
+    match socket.ready_state, Lwt.is_sleeping poll_promise with
+    | Closed, _ (* socket closed, don't renew *)
+    | _, true -> poll_promise (* still polling, don't renew *)
     | _ -> Transport.receive socket.transport (* poll again *)
 
   let sleep_until_ping socket handshake =
@@ -928,7 +905,7 @@ module Socket = struct
       Lwt.return socket
     else
       (* User thread has finished; close the socket *)
-      Lwt_log.debug ~section "User thread has finished; closing the socket." >>= fun () ->
+      Lwt_log.info ~section "User thread has finished; closing the socket." >>= fun () ->
       close socket
 
   let forward_until_close old_transport socket =
@@ -937,18 +914,15 @@ module Socket = struct
       Lwt_stream.get old_packet_stream >>= function
       | None
       | Some (Packet.CLOSE, _) ->
-        (* TODO: this is never reached, how to clean up?
-           We need to close the stream after the final poll.
-        *)
-        Lwt_log.debug "Finished forwarding packets."
+        Lwt_log.info ~section "Finished forwarding packets."
       | Some packet ->
-        Lwt_log.debug_f "Forwarding packet %s" (Packet.string_of_packet_type (fst packet)) >>= fun () ->
+        Lwt_log.info_f ~section "Forwarding packet %s" (Packet.string_of_packet_type (fst packet)) >>= fun () ->
         let () = Transport.push_packet socket.transport (Some packet) in
         react_forever ()
     in
     react_forever ()
 
-  let maybe_switch_transports socket =
+  let maybe_switch_transports socket poll_promise =
     match socket.probe_promise with
     | Some promise when not (Lwt.is_sleeping promise) ->
       promise >>= fun transport_opt ->
@@ -965,8 +939,15 @@ module Socket = struct
              transport = transport
            }
          in
-         write socket [Packet.upgrade] >>= fun () ->
-         let () = Lwt.async (fun () -> forward_until_close old_transport socket) in
+         Lwt_log.info ~section "Sending UPGRADE and waiting for old poll to complete..." >>= fun () ->
+         Lwt.join
+           [ write socket [Packet.upgrade]
+           ; poll_promise
+           ] >>= fun () ->
+         Lwt_log.info ~section "Draining old transport" >>= fun () ->
+         (* Terminate the old transport's packet stream *)
+         let () = Transport.push_packet old_transport None in
+         forward_until_close old_transport socket >>= fun () ->
          Lwt.return socket
        | None -> Lwt.return socket)
     | _ -> Lwt.return socket
@@ -1024,14 +1005,14 @@ module Socket = struct
           (* Explicitly cancel the sleep promises. *)
           let () = Lwt.cancel sleep_promise in
           (* Process packets receveived over the transport. *)
-          Lwt_list.fold_left_s process_packet socket
-            (Lwt_stream.get_available
-               (Transport.packet_stream socket.transport)) >>= fun socket ->
+          Transport.packet_stream socket.transport
+          |> Lwt_stream.get_available
+          |> Lwt_list.fold_left_s process_packet socket >>= fun socket ->
           (* Close the socket if the user callback has returned. *)
           maybe_close socket user_promise >>= fun socket ->
           (* If the upgrade probe was successful, complete the transport
              upgrade. *)
-          maybe_switch_transports socket >>= fun socket ->
+          maybe_switch_transports socket poll_promise >>= fun socket ->
           (* Send a ping packet if we need to. *)
           maybe_send_ping socket send >>= fun socket ->
           (* Flush the queued packets to the transport. *)
