@@ -559,7 +559,10 @@ module Transport = struct
           packets
           |> Lwt_list.iter_s
             (fun packet ->
-               send (Frame.create ~content:(Parser.encode_packet packet) ()))
+               let frame = (Frame.create ~content:(Parser.encode_packet packet) ()) in
+               Lwt_log.debug_f ~section "Sending frame %s"
+                 (Frame.show frame |> Stringext.replace_all ~pattern:"\n  " ~with_:" ") >>= fun () ->
+               send frame)
 
     let receive : t -> unit Lwt.t =
       fun t ->
@@ -745,12 +748,12 @@ module Socket = struct
         let open Transport.WebSocket in
         create uri
         |> open_ >>= fun websocket ->
-        Lwt_log.notice ~section "Probing websocket transport..." >>= fun () ->
+        Lwt_log.info ~section "Probing websocket transport..." >>= fun () ->
         write websocket [Packet.ping_probe] >>= fun () ->
         receive websocket >>= fun () ->
         (Lwt_stream.get websocket.packets >>= function
           | Some (Packet.PONG, Packet.P_String "probe") ->
-            Lwt_log.notice ~section "Ok to upgrade." >>= fun () ->
+            Lwt_log.info ~section "Ok to upgrade." >>= fun () ->
             Lwt.return (Some (Transport.WebSocket websocket))
           | Some (packet_type, packet_data) ->
             Lwt_log.error_f ~section "Can not upgrade. Expecting PONG, but got '%s'."
