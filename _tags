@@ -8,4 +8,6 @@ true: package(yojson)
 
 <src>: include
 
+<test/*>: package(ounit)
+
 <**/node_modules>: -traverse

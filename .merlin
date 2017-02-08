@@ -4,5 +4,6 @@ B _build/src
 B _build/test
 PKG cohttp.lwt
 PKG lwt
+PKG ounit
 PKG websocket
 PKG yojson

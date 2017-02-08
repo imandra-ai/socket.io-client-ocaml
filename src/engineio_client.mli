@@ -33,15 +33,21 @@ module Packet : sig
   type packet_data =
     | P_None
     | P_String of string
-    | P_Binary of int list
+    | P_Binary of Lwt_bytes.t
 
   type t = packet_type * packet_data
+  val string_of_t : t -> string
 
   val string_of_packet_type : packet_type -> string
   val packet_type_of_int : int -> packet_type
   val int_of_packet_type : packet_type -> int
 
   val string_of_packet_data : packet_data -> string
+end
+
+module Parser : sig
+  val decode_payload_as_binary : string -> Packet.t list
+  val encode_payload : Packet.t list -> string
 end
 
 module Socket : sig

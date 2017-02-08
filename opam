@@ -14,6 +14,7 @@ depends: [
   "ocamlfind" {build}
   "ocamlbuild" {build}
   "topkg" {build}
+  "ounit" {test}
   "cohttp"
   "lwt"
   "stringext"

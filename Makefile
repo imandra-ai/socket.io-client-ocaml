@@ -3,8 +3,10 @@ build:
 	ocaml pkg/pkg.ml build
 
 .PHONY: test
+# See https://forge.ocamlcore.org/tracker/index.php?func=detail&aid=1363&group_id=162&atid=730
+# for why we use '-runner sequential'.
 test:
-	ocaml pkg/pkg.ml test
+	_build/test/main.native -runner sequential
 
 .PHONY: examples
 examples:

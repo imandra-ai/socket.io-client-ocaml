@@ -80,6 +80,24 @@ module Util = struct
       | Some x -> [x]
       | None -> []
   end
+
+  module String = struct
+    let uncons : string -> (char * string) option =
+      fun string ->
+        let len = String.length string in
+        if len = 0 then
+          None
+        else
+          Some (String.get string 0, String.sub string 1 (len - 1))
+
+    let split_at : int -> string -> (string * string) option =
+      fun i string ->
+        let len = String.length string in
+        if i > len then
+          None
+        else
+          Some (String.sub string 0 i, String.sub string i (len - i))
+  end
 end
 
 module Packet = struct
@@ -96,7 +114,7 @@ module Packet = struct
   type packet_data =
     | P_None
     | P_String of string
-    | P_Binary of int list
+    | P_Binary of Lwt_bytes.t
 
   type t = packet_type * packet_data
 
@@ -137,13 +155,19 @@ module Packet = struct
     function
     | P_None -> ""
     | P_String data -> data
-    | P_Binary data -> Stringext.of_list (List.map Char.chr data)
+    | P_Binary bytes -> Lwt_bytes.to_string bytes
 
   let is_binary : packet_data -> bool =
     function
     | P_None -> false
     | P_String data -> false
     | P_Binary data -> true
+
+  let string_of_t : t -> string =
+    fun (packet_type, packet_data) ->
+      Printf.sprintf "%s: %s"
+        (string_of_packet_type packet_type)
+        (string_of_packet_data packet_data)
 
   let close : t =
     (CLOSE, P_None)
@@ -168,67 +192,72 @@ module Parser = struct
 
   (* See https://github.com/socketio/engine.io-protocol#encoding *)
 
-  let decode_packet : bool -> int list -> Packet.t =
-    fun is_string codes ->
-      match codes with
-      | i :: rest ->
-        ( i |> Char.chr |> Stringext.of_char |> int_of_string |> Packet.packet_type_of_int
-        , if is_string then
-            Packet.P_String
-              (List.map Char.chr rest
-               |> Stringext.of_list)
-          else
-            Packet.P_Binary rest
-        )
-      | [] ->
-        (Packet.ERROR, Packet.P_String "Empty packet")
+  let decode_packet : bool -> string -> Packet.t =
+    fun is_string data ->
+      match Util.String.split_at 1 data with
+      | None ->
+        (Packet.ERROR, Packet.P_String "No packet data")
+      | Some (packet_type_string, rest) ->
+        let packet_type =
+          packet_type_string
+          |> int_of_string
+          |> Packet.packet_type_of_int
+        in
+        let packet_data =
+          match rest, is_string with
+          | "", _ -> Packet.P_None
+          | _, true -> Packet.P_String rest
+          | _, false -> Packet.P_Binary (Lwt_bytes.of_string rest)
+        in
+        ( packet_type, packet_data )
 
   let decode_packet_string : string -> Packet.t =
-    fun input ->
-      input
-      |> Stringext.to_list
-      |> List.map Char.code
-      |> decode_packet true
+    fun data ->
+      decode_packet true data
 
   let decode_packet_binary : string -> Packet.t =
-    fun input ->
-      input
-      |> Stringext.to_list
-      |> List.map Char.code
-      |> decode_packet false
+    fun data ->
+      decode_packet false data
 
   let decode_payload_as_binary : string -> Packet.t list =
     fun string ->
-      let decode_payload is_string payload_length codes =
-        let (this_packet_data, codes) = Util.List.split_at payload_length codes in
-        ( decode_packet is_string this_packet_data
-        , codes
-        )
+      let decode_data is_string packet_length string =
+        match Util.String.split_at packet_length string with
+        | None -> raise (Invalid_argument "Bad packet length")
+        | Some (this_packet_data, rest) ->
+          ( decode_packet is_string this_packet_data
+          , rest
+          )
       in
-      let rec decode_payload_length is_string length = function
-        | 255 :: codes ->
-          let payload_length =
-            length
-            |> List.rev_map string_of_int
-            |> String.concat ""
-            |> int_of_string in
-          decode_payload is_string payload_length codes
-        | c :: codes -> decode_payload_length is_string (c :: length) codes
-        | [] -> raise (Invalid_argument "No payload length")
+      let rec decode_packet_length is_string length_digits_rev string =
+        match Util.String.uncons string with
+        | None ->
+          raise (Invalid_argument "No payload length")
+        | Some ('\255', rest) ->
+            (* end of packet length section *)
+            let payload_length =
+              length_digits_rev
+              |> List.rev_map Char.code
+              |> List.map string_of_int
+              |> String.concat ""
+              |> int_of_string in
+            decode_data is_string payload_length rest
+        | Some (c, rest) ->
+          decode_packet_length is_string (c :: length_digits_rev) rest
       in
-      let decode_one_packet = function
-        | 0 :: codes -> decode_payload_length true [] codes
-        | 1 :: codes -> decode_payload_length false [] codes
-        | c :: _ -> raise (Invalid_argument (Format.sprintf "Invalid string/binary flag: %i" c))
-        | [] -> raise (Invalid_argument "Empty payload")
+      let decode_one_packet string =
+        match Util.String.uncons string with
+        | None -> raise (Invalid_argument "Empty payload")
+        | Some ('\000', rest) -> decode_packet_length true [] rest
+        | Some ('\001', rest) -> decode_packet_length false [] rest
+        | Some (c, rest) -> raise (Invalid_argument (Format.sprintf "Invalid string/binary flag: %c" c))
       in
-      let rec go codes =
-        match decode_one_packet codes with
-        | (packet, []) -> [packet]
-        | (packet, codes) -> packet :: go codes
+      let rec go string =
+        match decode_one_packet string with
+        | (packet, "") -> [packet]
+        | (packet, string) -> packet :: go string
       in
-      let char_codes = Stringext.to_list string |> List.map Char.code in
-      go char_codes
+      go string
 
   let encode_packet : Packet.t -> string =
     fun (packet_type, packet_data) ->
@@ -241,28 +270,28 @@ module Parser = struct
       let encode_one_packet (packet_type, packet_data) =
         let bin_flag =
           if Packet.is_binary packet_data then
-            1
+            '\001'
           else
-            0
+            '\000'
         in
         let data_as_string = Packet.string_of_packet_data packet_data in
         let payload_length =
           (* the length of the data plus one for the packet type *)
           1 + (String.length data_as_string)
         in
-        let length_as_digits =
+        let length_as_char_digits =
           (* convert the integer length of the packet_data to a byte string *)
           payload_length                (* 97 *)
           |> string_of_int              (* -> "97" *)
           |> Stringext.to_list          (* -> ['9'; '7']*)
           |> List.map Stringext.of_char (* -> ["9"; "7"] *)
           |> List.map int_of_string     (* -> [9; 7] *)
-          |> List.map Char.chr          (* -> ['\t'; '\007'] *)
-          |> Stringext.of_list          (* -> "\t\007" *)
+          |> List.map Char.chr          (* -> ['\009'; '\007'] *)
+          |> Stringext.of_list          (* -> "\009\007" *)
         in
         Printf.sprintf "%c%s%c%i%s"
-          (Char.chr bin_flag)
-          length_as_digits
+          bin_flag
+          length_as_char_digits
           (Char.chr 255)
           (Packet.int_of_packet_type packet_type)
           data_as_string
@@ -378,7 +407,7 @@ module Transport = struct
           (match packet_data with
            | Packet.P_None -> "no data"
            | Packet.P_String string -> string
-           | Packet.P_Binary codes -> Format.sprintf "binary packet_data of length %i" (List.length codes))
+           | Packet.P_Binary bytes -> Format.sprintf "binary packet_data of length %i" (Lwt_bytes.length bytes))
 
     let process_response : t -> Cohttp_lwt_unix.Response.t * Cohttp_lwt_body.t -> unit Lwt.t =
       fun t (resp, body) ->
@@ -561,7 +590,7 @@ module Transport = struct
                 Lwt.return_some
                   ( Packet.CLOSE
                   , Packet.P_Binary
-                      (frame.content |> Stringext.to_list |> List.map Char.code)
+                      (frame.content |> Lwt_bytes.of_string)
                   )
               | _ ->
                 Lwt_log.error_f ~section "Unexpected frame %s"
