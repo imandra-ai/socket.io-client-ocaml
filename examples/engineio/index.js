@@ -7,6 +7,8 @@
 var express = require('express');
 var app = express();
 var server = require('http').createServer(app);
+// Un-comment to test opening with the websocket transport.
+// var io = require('engine.io').attach(server, {transports: ['websocket']});
 var io = require('engine.io').attach(server);
 
 app.get('/', function(req, res){

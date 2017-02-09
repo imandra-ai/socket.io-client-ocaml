@@ -409,6 +409,13 @@ module Transport = struct
            | Packet.P_String string -> string
            | Packet.P_Binary bytes -> Format.sprintf "binary packet_data of length %i" (Lwt_bytes.length bytes))
 
+    type poll_error =
+      { code : int
+      ; body : string
+      }
+
+    exception Polling_exception of poll_error
+
     let process_response : t -> Cohttp_lwt_unix.Response.t * Cohttp_lwt_body.t -> unit Lwt.t =
       fun t (resp, body) ->
         Cohttp.(Cohttp_lwt_unix.(
@@ -433,7 +440,7 @@ module Transport = struct
             else
               Cohttp_lwt_body.to_string body >>= fun body ->
               Lwt_log.error_f ~section "%s" body >>= fun () ->
-              Lwt.fail_with (Format.sprintf "Bad response status: %i" code)
+              Lwt.fail (Polling_exception { code; body })
           ))
 
     let receive : t -> unit Lwt.t =
@@ -445,14 +452,29 @@ module Transport = struct
                 (fun () ->
                    Client.get
                      ~headers:(Header.init_with "accept" "application/json")
-                     t.uri >>= process_response t
-                )
-                (function
-                  | Failure msg ->
-                    Lwt_log.error_f ~section "Poll failed: '%s'" msg
-                  | exn -> fail exn)
+                     t.uri >>= process_response t)
+                (fun exn ->
+                   match exn with
+                   | Failure msg ->
+                     Lwt_log.error_f ~section "Poll failed: '%s'" msg
+                   | Polling_exception poll_error ->
+                     Lwt_log.error_f ~section "Poll failed: %i '%s'" poll_error.code poll_error.body >>= fun () ->
+                     fail exn
+                   | exn -> fail exn)
             ))
         )
+
+    let open_ : t -> t Lwt.t =
+      fun t ->
+        match t.ready_state with
+        | Closed ->
+          receive t >>= fun () ->
+          Lwt.return
+            { t with ready_state = Opening }
+        | _ ->
+          Lwt_log.warning_f ~section "Attempted open on %s transport"
+            (string_of_ready_state t.ready_state) >>= fun () ->
+          Lwt.return t
 
     let write : t -> Packet.t list -> unit Lwt.t =
       fun t packets ->
@@ -533,16 +555,22 @@ module Transport = struct
 
     let open_ : t -> t Lwt.t =
       fun t ->
-        Resolver_lwt.resolve_uri ~uri:t.uri Resolver_lwt_unix.system >>= fun endp ->
-        Conduit_lwt_unix.(
-          endp_to_client ~ctx:default_ctx endp >>= fun client ->
-          Websocket_lwt.with_connection ~ctx:default_ctx client t.uri
-        ) >>= fun (recv, send) ->
-        Lwt.return
-          { t with
-            ready_state = Open
-          ; connection = Some (recv, send)
-          }
+        match t.ready_state with
+        | Closed ->
+          Resolver_lwt.resolve_uri ~uri:t.uri Resolver_lwt_unix.system >>= fun endp ->
+          Conduit_lwt_unix.(
+            endp_to_client ~ctx:default_ctx endp >>= fun client ->
+            Websocket_lwt.with_connection ~ctx:default_ctx client t.uri
+          ) >>= fun (recv, send) ->
+          Lwt.return
+            { t with
+              ready_state = Open
+            ; connection = Some (recv, send)
+            }
+        | _ ->
+          Lwt_log.warning_f ~section "Attempted open on %s transport"
+            (string_of_ready_state t.ready_state) >>= fun () ->
+          Lwt.return t
 
     (* Socket should already be open - we only get a websocket transport via an
        upgrade. *)
@@ -647,6 +675,15 @@ module Transport = struct
     fun uri ->
       WebSocket (WebSocket.create uri)
 
+  let open_ : t -> t Lwt.t =
+    function
+    | Polling polling ->
+      Polling.open_ polling >>= fun polling ->
+      Lwt.return (Polling polling)
+    | WebSocket websocket ->
+      WebSocket.open_ websocket >>= fun websocket ->
+      Lwt.return (WebSocket websocket)
+
   let write : t -> Packet.t list -> unit Lwt.t =
     fun t packets ->
       match t with
@@ -723,7 +760,7 @@ module Socket = struct
       let uri =
         Uri.with_query uri [("EIO", [string_of_int Parser.protocol])]
       in
-      { ready_state = Opening
+      { ready_state = Closed
       ; transport =
           Transport.create_polling uri
       ; handshake = None
@@ -735,6 +772,56 @@ module Socket = struct
       ; push_packet = push_packet
       }
 
+  let open_ : t -> t Lwt.t =
+    fun socket ->
+      match socket.ready_state with
+      | Closed ->
+        Lwt.catch
+          (fun () ->
+             Transport.open_ socket.transport >>= fun transport ->
+             Lwt.return
+               { socket with
+                 ready_state = Opening
+               ; transport = transport
+               })
+          (fun exn ->
+             match exn with
+             | Transport.Polling.Polling_exception poll_error ->
+               let is_transport_unknown =
+                 (* TODO: decode the poll_error as Json and use the error code.
+                    ("Transport unknown" is code 0.)
+                 *)
+                 try
+                   let _ =
+                     Str.search_forward (Str.regexp_string "Transport unknown") Transport.Polling.(poll_error.body) 0
+                   in true
+                 with
+                 | Not_found -> false
+               in
+               if is_transport_unknown then
+                 (* Try again with the websocket transport *)
+                 Lwt_log.info ~section
+                   "Polling transport was rejected, now opening with websocket transport." >>= fun () ->
+                 let socket =
+                   { socket with
+                     transport =
+                       Transport.create_websocket socket.uri
+                   }
+                 in
+                 Transport.open_ socket.transport >>= fun transport ->
+                 Lwt.return
+                   { socket with
+                     ready_state = Opening
+                   ; transport = transport
+                   }
+               else
+                 Lwt.fail exn
+          )
+      | _ ->
+        Lwt_log.warning_f ~section "Attempted open on %s socket"
+          (string_of_ready_state socket.ready_state) >>= fun () ->
+        Lwt.return socket
+
   let write : t -> Packet.t list -> unit Lwt.t =
     fun socket packets ->
       match socket.ready_state, packets with
@@ -742,9 +829,13 @@ module Socket = struct
       | _, [] -> Lwt.return_unit
       | _, _ -> Transport.write socket.transport packets
 
-  let probe : Uri.t -> Parser.handshake -> Transport.t option Lwt.t =
-    fun uri handshake ->
-      if List.exists ((=) Transport.WebSocket.name) Parser.(handshake.upgrades) then
+  let probe : Uri.t -> Transport.t -> Parser.handshake -> Transport.t option Lwt.t =
+    fun uri current_transport handshake ->
+      let should_probe =
+        List.exists ((=) Transport.WebSocket.name) Parser.(handshake.upgrades) &&
+        Transport.string_of_t current_transport <> Transport.WebSocket.name
+      in
+      if should_probe then
         let open Transport.WebSocket in
         create uri
         |> open_ >>= fun websocket ->
@@ -779,7 +870,7 @@ module Socket = struct
         ; handshake = Some handshake
         ; transport = transport
         ; uri = uri
-        ; probe_promise = Some (probe uri handshake)
+        ; probe_promise = Some (probe uri transport handshake)
         }
 
   let on_pong : t -> t Lwt.t =
@@ -1029,6 +1120,7 @@ module Socket = struct
       in
       let socket =
         create uri in
+      open_ socket >>= fun socket ->
       let poll_promise =
         Transport.receive socket.transport in
       let user_promise =

@@ -2,6 +2,7 @@ true: thread,bin_annot
 
 true: package(cohttp.lwt)
 true: package(lwt)
+true: package(str)
 true: package(stringext)
 true: package(websocket.lwt)
 true: package(yojson)
