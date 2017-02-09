@@ -2,6 +2,7 @@ S src
 S test
 B _build/src
 B _build/test
+PKG angstrom
 PKG cohttp.lwt
 PKG lwt
 PKG ounit

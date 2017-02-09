@@ -19,7 +19,7 @@ let main () =
       ()
   in
   Socketio_client.(
-    Socket.with_connection uri
+    Socket.with_connection uri ~namespace:"/a-namespace"
       (fun packets send ->
          let rec react_forever next_ack_id =
            Lwt_stream.get packets >>= function
@@ -28,14 +28,14 @@ let main () =
                (Packet.string_of_t packet) >>= fun () ->
 
              (match packet with
-              | Packet.EVENT ("chat message", [`String content], _) ->
+              | Packet.EVENT ("chat message", [`String content], _, _) ->
                 Lwt_io.printlf "got message: %s" content >>= fun () ->
                 Lwt.return next_ack_id
 
-              | Packet.EVENT ("pls respond", [`String content], Some ack_id) ->
+              | Packet.EVENT ("pls respond", [`String content], Some ack_id, _) ->
                 Lwt_io.printlf "responding to ack request %i" ack_id >>= fun () ->
                 send (Packet.ACK ([`String (Printf.sprintf "OCaml is replying to your message: %s" content)], ack_id)) >>= fun () ->
-                send (Packet.EVENT ("pls respond too", [`String "I'm needy too"], Some next_ack_id)) >>= fun () ->
+                send (Packet.event "pls respond too" [`String "I'm needy too"] ~ack:next_ack_id) >>= fun () ->
                 Lwt.return (next_ack_id + 1)
 
               | Packet.ERROR error ->
@@ -54,7 +54,7 @@ let main () =
          let rec sendline () =
            Lwt_io.(read_line_opt stdin) >>= function
            | None -> Lwt_io.printl "Good-bye!"
-           | Some content -> send (Packet.EVENT ("chat message", [`String content], None)) >>= sendline
+           | Some content -> send (Packet.event "chat message" [`String content]) >>= sendline
          in
 
          sendline () <?> react_forever 0)

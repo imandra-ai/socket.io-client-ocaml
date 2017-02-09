@@ -1,5 +1,6 @@
 true: thread,bin_annot
 
+true: package(angstrom)
 true: package(cohttp.lwt)
 true: package(lwt)
 true: package(str)

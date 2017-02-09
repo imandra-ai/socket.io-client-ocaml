@@ -9,9 +9,9 @@ open Lwt.Infix
 
 module Packet = struct
   type t =
-    | CONNECT
+    | CONNECT of string option
     | DISCONNECT
-    | EVENT of string * Yojson.Basic.json list * int option
+    | EVENT of string * Yojson.Basic.json list * int option * string option
     | ACK of Yojson.Basic.json list * int
     | ERROR of string
     | BINARY_EVENT
@@ -19,7 +19,7 @@ module Packet = struct
 
   let int_of_t : t -> int =
     function
-    | CONNECT -> 0
+    | CONNECT _ -> 0
     | DISCONNECT -> 1
     | EVENT _ -> 2
     | ACK _ -> 3
@@ -29,91 +29,111 @@ module Packet = struct
 
   let string_of_t : t -> string =
     function
-    | CONNECT -> "CONNECT"
+    | CONNECT None -> Printf.sprintf "CONNECT[/]"
+    | CONNECT (Some namespace) -> Printf.sprintf "CONNECT[%s]" namespace
     | DISCONNECT -> "DISCONNECT"
-    | EVENT (name, _, _) -> Printf.sprintf "EVENT[%s]" name
+    | EVENT (name, _, _, _) -> Printf.sprintf "EVENT[%s]" name
     | ACK (_, ack_id)-> Printf.sprintf "ACK[%i]" ack_id
-    | ERROR _ -> "ERROR"
+    | ERROR msg -> Printf.sprintf "ERROR: %s" msg
     | BINARY_EVENT -> "BINARY_EVENT"
     | BINARY_ACK -> "BINARY_ACK"
+
+  (* Helpers *)
+
+  let event : string -> ?ack:int -> ?namespace:string -> Yojson.Basic.json list -> t =
+    fun name ?ack ?namespace arguments ->
+      EVENT (name, arguments, ack, namespace)
 end
 
 module Parser = struct
-  let rec decode_ack data ack_chars_rev =
-    match Util.String.uncons data with
-    | Some ('[', rest) ->
-      let ack =
-        match ack_chars_rev with
-        | [] -> None
-        | _ ->
-          Some
-            (ack_chars_rev
-             |> List.rev
-             |> Stringext.of_list
-             |> int_of_string)
-      in
-      (ack, data)
-    | Some (c, rest) -> decode_ack rest (c :: ack_chars_rev)
-    | None -> (None, data)
+  module P = struct
+    open Angstrom
 
-  let decode_packet_event : string -> Packet.t =
-    fun data ->
-      let ack, rest = decode_ack data [] in
-      let json =
-        try Ok (Yojson.Basic.from_string rest) with
-        | Yojson.Json_error msg -> Error msg
-      in
-      match json with
-      | Ok (`List (`String event_name :: arguments)) ->
-        Packet.EVENT (event_name, arguments, ack)
-      | Ok _ -> Packet.ERROR "Expected a list in the packet data."
-      | Error msg -> Packet.ERROR (Printf.sprintf "JSON error: %s" msg)
+    let any_digit =
+      satisfy (function '0' .. '9' -> true | _ -> false) >>| fun c -> int_of_string (Stringext.of_char c)
 
-  let decode_packet_ack : string -> Packet.t =
-    fun data ->
-      let ack, rest = decode_ack data [] in
-      match ack with
-      | None -> Packet.ERROR (Printf.sprintf "Ack packet with no id: %s" data)
-      | Some ack_id ->
-        let json =
-          try Ok (Yojson.Basic.from_string rest) with
-          | Yojson.Json_error msg -> Error msg
-        in
-        (match json with
-         | Ok (`List arguments) ->
-           Packet.ACK (arguments, ack_id)
-         | Ok _ -> Packet.ERROR "Expected an argument list in the packet data."
-         | Error msg -> Packet.ERROR (Printf.sprintf "JSON error: %s" msg))
+    let any_integer =
+      take_while1 (function '0' .. '9' -> true | _ -> false) >>| int_of_string
 
+    let any_string_until p =
+      many_till any_char p >>| Stringext.of_list
+
+    let json_until_end_of_input : Yojson.Basic.json Angstrom.t =
+      any_string_until end_of_input >>= fun arg_string ->
+      (try return (Yojson.Basic.from_string arg_string) with
+       | Yojson.Json_error msg -> fail msg)
+
+    let packet_connect : Packet.t Angstrom.t =
+      option None (many1 any_char >>| fun chars -> Some (Stringext.of_list chars))
+      >>| fun namespace -> Packet.CONNECT namespace
+
+    let option_namespace : string option Angstrom.t =
+      option None
+        (char '/' *>
+         take_while1 (function | '[' | ',' -> false | _ -> true)
+         >>| fun namespace -> Some (Printf.sprintf "/%s" namespace))
+
+    let option_ack : int option Angstrom.t =
+      option None (any_integer >>| fun ack_id -> Some ack_id)
+
+    let packet_event : Packet.t Angstrom.t =
+      option_namespace >>= fun namespace ->
+      option ' ' (char ',') *>
+      option_ack >>= fun ack ->
+      json_until_end_of_input >>= function
+      | `List (`String event_name :: arguments) ->
+        return (Packet.EVENT (event_name, arguments, ack, namespace))
+      | _ -> fail "EVENT arguments did not decode to a Json list"
+
+    let packet_ack : Packet.t Angstrom.t =
+      any_integer >>= fun ack_id ->
+      json_until_end_of_input >>= function
+      | `List arguments ->
+        return (Packet.ACK (arguments, ack_id))
+      | _ -> fail "ACK arguments did not decode to a Json list"
+
+    let packet_error : Packet.t Angstrom.t =
+      any_string_until end_of_input >>| fun message ->
+      Packet.ERROR message
+
+    let packet : Packet.t Angstrom.t =
+      any_digit >>= fun packet_type ->
+      match packet_type with
+      | 0 -> packet_connect
+      | 1 -> return Packet.DISCONNECT
+      | 2 -> packet_event
+      | 3 -> packet_ack
+      | 4 -> packet_error
+      | 5 -> return Packet.BINARY_EVENT
+      | 6 -> return Packet.BINARY_ACK
+      | _ -> fail (Printf.sprintf "unknown packet type %i" packet_type)
+  end
 
   let decode_packet : string -> Packet.t =
     fun data ->
-      match Util.String.uncons data with
-      | None -> Packet.ERROR "no data in packet"
-      | Some ('0', "") -> Packet.CONNECT
-      | Some ('1', "") -> Packet.DISCONNECT
-      | Some ('2', event_data) -> decode_packet_event event_data
-      | Some ('3', ack_data) -> decode_packet_ack ack_data
-      | Some ('4', error) -> Packet.ERROR error
-      | Some ('5', "") -> Packet.BINARY_EVENT
-      | Some ('6', "") -> Packet.BINARY_ACK
-      | _ -> Packet.ERROR (Printf.sprintf "Could not decode packet data: %s" data)
+      match Angstrom.parse_only P.packet (`String data) with
+      | Ok packet -> packet
+      | Error message -> Packet.ERROR (Printf.sprintf "Error decoding packet: %s" message)
 
   let encode_packet : Packet.t -> string =
     fun packet ->
-    match packet with
-    | Packet.EVENT (event_name, data, ack) ->
-      Printf.sprintf "%i%s%s"
-        (Packet.int_of_t packet)
-        (Util.Option.value_map ~default:"" ~f:string_of_int ack)
-        (Yojson.Basic.to_string (`List (`String event_name :: data)))
-    | Packet.ACK (data, ack_id) ->
-      Printf.sprintf "%i%i%s"
-        (Packet.int_of_t packet)
-        ack_id
-        (Yojson.Basic.to_string (`List data))
-    | _ ->
-      raise (Invalid_argument (Printf.sprintf "Encoding %s: not implemented" (Packet.string_of_t packet)))
+      match packet with
+      | Packet.CONNECT namespace ->
+        Printf.sprintf "%i%s"
+          (Packet.int_of_t packet)
+          (Util.Option.value ~default:"" namespace)
+      | Packet.EVENT (event_name, data, ack, nsp) ->
+        Printf.sprintf "%i%s%s"
+          (Packet.int_of_t packet)
+          (Util.Option.value_map ~default:"" ~f:string_of_int ack)
+          (Yojson.Basic.to_string (`List (`String event_name :: data)))
+      | Packet.ACK (data, ack_id) ->
+        Printf.sprintf "%i%i%s"
+          (Packet.int_of_t packet)
+          ack_id
+          (Yojson.Basic.to_string (`List data))
+      | _ ->
+        raise (Invalid_argument (Printf.sprintf "Encoding %s: not implemented" (Packet.string_of_t packet)))
 end
 
 module Socket = struct
@@ -124,41 +144,43 @@ module Socket = struct
     { uri : Uri.t
     ; connected : bool
     ; ids : int
-    ; nsp : string
+    ; namespace : string option
+    (* None means the default namespace, "/" *)
     ; acks : int list
     }
 
-  let create : Uri.t -> t =
-    fun uri ->
+  let create : Uri.t -> string option -> t =
+    fun uri namespace ->
       { uri = uri
       ; connected = false
       ; ids = 0
-      ; nsp = "/"
+      ; namespace = namespace
       ; acks = []
       }
 
   (* Socket.io packet handlers *)
 
-  let on_connect socket =
+  let on_connect socket namespace =
     Lwt.return
-       { socket with
-          connected = true
-        }
+      { socket with
+        connected =
+          namespace = socket.namespace
+      }
 
   let on_packet socket packet =
     Lwt_log.info_f ~section "on_packet %s" (Packet.string_of_t packet) >>= fun () ->
     match packet with
-    | Packet.CONNECT -> on_connect socket
+    | Packet.CONNECT namespace -> on_connect socket namespace
     | _ -> Lwt.return socket
 
   (* Engine.io packet handlers *)
 
   let on_open socket =
-    if socket.nsp <> "/" then
-      (* TODO: send a Connect packet *)
-      Lwt.return socket
-    else
-      Lwt.return socket
+    match socket.namespace with
+    | None -> Lwt.return (socket, [])
+    | Some namespace ->
+      Lwt.return
+        (socket, [Packet.CONNECT socket.namespace])
 
   let on_message socket packet_data =
     let data = Engineio_client.Packet.string_of_packet_data packet_data in
@@ -166,22 +188,22 @@ module Socket = struct
     on_packet socket packet
     |> Lwt.map (fun socket -> (socket, packet))
 
-  let process_eio_packet : t * Packet.t list -> Engineio_client.Packet.t -> (t * Packet.t list) Lwt.t =
-    fun (socket, packets_received_rev) (packet_type, packet_data) ->
+  let process_eio_packet : t * Packet.t list * Packet.t list -> Engineio_client.Packet.t -> (t * Packet.t list * Packet.t list) Lwt.t =
+    fun (socket, packets_received_rev, packets_to_send) (packet_type, packet_data) ->
       Lwt_log.info_f ~section "on_eio_packet %s" (Engineio_client.Packet.string_of_packet_type packet_type) >>= fun () ->
       match packet_type with
       | Engineio_client.Packet.OPEN ->
         on_open socket
-        |> Lwt.map (fun socket -> (socket, packets_received_rev))
+        |> Lwt.map (fun (socket, open_packets_to_send) -> (socket, packets_received_rev, List.append packets_to_send open_packets_to_send))
       | Engineio_client.Packet.MESSAGE ->
         on_message socket packet_data >>= fun (socket, packet_received) ->
-        Lwt.return (socket, packet_received :: packets_received_rev)
-      | _ -> Lwt.return (socket, packets_received_rev)
+        Lwt.return (socket, packet_received :: packets_received_rev, packets_to_send)
+      | _ -> Lwt.return (socket, packets_received_rev, packets_to_send)
 
   (* Entry point *)
 
-  let with_connection : Uri.t -> ((Packet.t Lwt_stream.t) -> (Packet.t -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t =
-    fun uri f ->
+  let with_connection : Uri.t -> ?namespace:string -> ((Packet.t Lwt_stream.t) -> (Packet.t -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t =
+    fun uri ?namespace f ->
       (* packets recieved *)
       let (packets_recv_stream, push_packet_recv) =
         Lwt_stream.create () in
@@ -192,7 +214,7 @@ module Socket = struct
         push_packet_send (Some packet); Lwt.return_unit in
       let user_promise =
         f packets_recv_stream send in
-      let socket = create uri in
+      let socket = create uri namespace in
       let sleep_until_packet_to_send () =
         Lwt_stream.peek packets_send_stream >>= fun _ ->
         Lwt_log.info ~section "Waking to send a packet"
@@ -209,21 +231,25 @@ module Socket = struct
                ; sleep_until_packet_received packet_stream
                ] >>= fun () ->
              packet_stream
-           |> Lwt_stream.get_available
-           |> Lwt_list.fold_left_s process_eio_packet (socket, [])
-           >>= fun (socket, packets_rev) ->
-           let () =
-             packets_rev
-             |> List.rev
-             |> List.iter (fun packet -> push_packet_recv (Some packet))
-           in
-           packets_send_stream
-           |> Lwt_stream.get_available
-           |> Lwt_list.iter_s
-             (fun packet ->
-                Parser.encode_packet packet
-                |> send_message) >>= fun () ->
-           react_forever socket
+             |> Lwt_stream.get_available
+             |> Lwt_list.fold_left_s process_eio_packet (socket, [], [])
+             >>= fun (socket, packets_received_rev, packets_to_send) ->
+             let () =
+               packets_received_rev
+               |> List.rev
+               |> List.iter (fun packet -> push_packet_recv (Some packet))
+             in
+             let () =
+               packets_to_send
+               |> List.iter (fun packet -> push_packet_send (Some packet))
+             in
+             packets_send_stream
+             |> Lwt_stream.get_available
+             |> Lwt_list.iter_s
+               (fun packet ->
+                  Parser.encode_packet packet
+                  |> send_message) >>= fun () ->
+             react_forever socket
            in
            Lwt.choose
              [ react_forever socket
