@@ -981,12 +981,11 @@ module Socket = struct
         Lwt_stream.create () in
       let send packet =
         push_packet_send (Some packet); Lwt.return_unit in
+
       let rec maintain_connection : 'a. unit Lwt.t -> 'a Lwt.t -> t -> 'a Lwt.t =
         fun poll_promise user_promise socket ->
           log_socket_state socket >>= fun () ->
-          (* Re-start the promise that waits on new packets from the
-             transport. *)
-          let poll_promise = maybe_poll_again poll_promise socket in
+
           (* Create a promise that sleeps until:
              - we need to send a PING;
              - the server has failed to respond with a PONG;
@@ -1007,6 +1006,7 @@ module Socket = struct
                    ]
                  ])
           in
+
           (* Create a promise that sleeps until one of the following returns:
              - the user's callback (if it hasn't already);
              - the transport upgrade probe (if there is one);
@@ -1024,21 +1024,32 @@ module Socket = struct
                  ; sleep_promise
                  ]
                ]) >>= fun () ->
+
           (* Explicitly cancel the sleep promises. *)
           let () = Lwt.cancel sleep_promise in
+
           (* Process packets receveived over the transport. *)
           Transport.packet_stream socket.transport
           |> Lwt_stream.get_available
           |> Lwt_list.fold_left_s process_packet socket >>= fun socket ->
+
           (* Close the socket if the user callback has returned. *)
           maybe_close socket user_promise >>= fun socket ->
+
           (* If the upgrade probe was successful, complete the transport
              upgrade. *)
           maybe_switch_transports socket poll_promise >>= fun socket ->
+
           (* Send a ping packet if we need to. *)
           maybe_send_ping socket send >>= fun socket ->
+
           (* Flush the queued packets to the transport. *)
           write socket (Lwt_stream.get_available packets_send_stream) >>= fun () ->
+
+          (* Re-start the promise that waits on new packets from the
+             transport. *)
+          let poll_promise = maybe_poll_again poll_promise socket in
+
           (* If the socket is closed, return the user's callback. Otherwise, loop. *)
           match socket.ready_state with
           | Closed ->
@@ -1046,14 +1057,18 @@ module Socket = struct
             user_promise
           | _ -> maintain_connection poll_promise user_promise socket
       in
+
       let socket =
         create uri in
+
       open_ socket >>= fun socket ->
-      let poll_promise =
-        Transport.receive socket.transport in
+
+      let poll_promise = Lwt.return_unit in
+
       let user_promise =
         f socket.packets
           (fun data -> send (Packet.message data))
       in
+
       maintain_connection poll_promise user_promise socket
 end
