@@ -133,6 +133,9 @@ module Parser = struct
         Printf.sprintf "%i%s"
           (Packet.int_of_t packet)
           (Util.Option.value ~default:"" namespace)
+      | Packet.DISCONNECT ->
+        Printf.sprintf "%i"
+          (Packet.int_of_t packet)
       | Packet.EVENT (event_name, data, ack, nsp) ->
         Printf.sprintf "%i%s%s%s"
           (Packet.int_of_t packet)
@@ -283,6 +286,7 @@ module Socket = struct
              [ react_forever socket
              ; user_promise >>= fun _ -> Lwt.return_unit
              ] >>= fun () ->
+           Packet.DISCONNECT |> Parser.encode_packet |> send_message >>= fun () ->
            user_promise
         )
 end
