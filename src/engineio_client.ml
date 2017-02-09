@@ -1039,18 +1039,18 @@ module Socket = struct
           |> Lwt_stream.get_available
           |> Lwt_list.fold_left_s process_packet socket >>= fun socket ->
 
+          (* Send a ping packet if we need to. *)
+          maybe_send_ping socket send >>= fun socket ->
+
+          (* Flush the queued packets to the transport. *)
+          write socket (Lwt_stream.get_available packets_send_stream) >>= fun () ->
+
           (* Close the socket if the user callback has returned. *)
           maybe_close socket user_promise >>= fun socket ->
 
           (* If the upgrade probe was successful, complete the transport
              upgrade. *)
           maybe_switch_transports socket poll_promise >>= fun socket ->
-
-          (* Send a ping packet if we need to. *)
-          maybe_send_ping socket send >>= fun socket ->
-
-          (* Flush the queued packets to the transport. *)
-          write socket (Lwt_stream.get_available packets_send_stream) >>= fun () ->
 
           (* Re-start the promise that waits on new packets from the
              transport. *)
