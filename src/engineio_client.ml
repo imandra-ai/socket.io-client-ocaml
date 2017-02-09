@@ -505,6 +505,16 @@ module Transport = struct
     let on_open : t -> Parser.handshake -> t =
       fun t handshake -> t
 
+    let write_frame : t -> Websocket_lwt.Frame.t -> unit Lwt.t =
+      fun t frame ->
+        match t.connection with
+        | None ->
+          Lwt_log.info ~section "Write attempt with no connection."
+        | Some (recv, send) ->
+          Lwt_log.debug_f ~section "Sending frame %s"
+            (Frame.show frame |> Stringext.replace_all ~pattern:"\n  " ~with_:" ") >>= fun () ->
+          send frame
+
     let write : t -> Packet.t list -> unit Lwt.t =
       fun t packets ->
         match t.connection with
@@ -516,9 +526,7 @@ module Transport = struct
           |> Lwt_list.iter_s
             (fun packet ->
                let frame = (Frame.create ~content:(Parser.encode_packet packet) ()) in
-               Lwt_log.debug_f ~section "Sending frame %s"
-                 (Frame.show frame |> Stringext.replace_all ~pattern:"\n  " ~with_:" ") >>= fun () ->
-               send frame)
+               write_frame t frame)
 
     let receive : t -> unit Lwt.t =
       fun t ->
@@ -563,7 +571,9 @@ module Transport = struct
               let () = Util.Option.iter ~f:(fun packet -> t.push_packet (Some packet)) packet_opt in
               Lwt.return_unit
             )
-            (fun exn -> Lwt_log.error_f ~section "receive" >>= fun () -> Lwt.fail exn)
+            (fun exn ->
+               Lwt_log.error_f ~section "receive: %s" (Printexc.to_string exn) >>= fun () ->
+               Lwt.fail exn)
 
     let on_close : t -> t =
       fun t ->
@@ -577,13 +587,8 @@ module Transport = struct
 
     let close : t -> t Lwt.t =
       fun t ->
-        match t.connection with
-        | None ->
-          Lwt_log.info ~section "Close attempt with no connection." >>= fun () ->
-          Lwt.return (on_close t)
-        | Some (recv, send) ->
-          send (Frame.close 1000) >>= fun () ->
-          Lwt.return (on_close t)
+        write_frame t (Frame.close 1000) >>= fun () ->
+        Lwt.return (on_close t)
   end
 
   type t =
@@ -836,10 +841,11 @@ module Socket = struct
   let close : t -> t Lwt.t =
     fun socket ->
       match socket.ready_state with
-      | Closed -> Lwt.return socket
+      | Closed ->
+        Lwt.return socket
       | _ ->
         Transport.close socket.transport >>= fun transport ->
-        on_close socket
+        on_close { socket with transport = transport }
 
   let log_socket_state : t -> unit Lwt.t =
     fun socket ->
@@ -1053,7 +1059,9 @@ module Socket = struct
           (* If the socket is closed, return the user's callback. Otherwise, loop. *)
           match socket.ready_state with
           | Closed ->
-            Lwt_log.debug ~section "Socket is Closed, now waiting for user promise to terminate." >>= fun () ->
+            Lwt_log.debug ~section
+              "Socket is Closed, now waiting for user promise to terminate."
+            >>= fun () ->
             user_promise
           | _ -> maintain_connection poll_promise user_promise socket
       in
