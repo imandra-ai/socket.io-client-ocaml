@@ -15,6 +15,7 @@ depends: [
   "ocamlbuild" {build}
   "topkg" {build}
   "ounit" {test}
+  "angstrom"
   "cohttp"
   "lwt"
   "stringext"
