@@ -211,42 +211,54 @@ module Socket = struct
     |> Lwt.map (fun socket -> (socket, packet))
 
   let process_eio_packet : t * Packet.t list * Packet.t list -> Engineio_client.Packet.t -> (t * Packet.t list * Packet.t list) Lwt.t =
-    fun (socket, packets_received_rev, packets_to_send) (packet_type, packet_data) ->
+    fun (socket, packets_received_rev, control_packets_to_send) (packet_type, packet_data) ->
       Lwt_log.info_f ~section "on_eio_packet %s" (Engineio_client.Packet.string_of_packet_type packet_type) >>= fun () ->
       match packet_type with
       | Engineio_client.Packet.OPEN ->
         on_open socket
-        |> Lwt.map (fun (socket, open_packets_to_send) -> (socket, packets_received_rev, List.append packets_to_send open_packets_to_send))
+        |> Lwt.map (fun (socket, open_packets_to_send) -> (socket, packets_received_rev, List.append control_packets_to_send open_packets_to_send))
       | Engineio_client.Packet.MESSAGE ->
         on_message socket packet_data >>= fun (socket, packet_received) ->
-        Lwt.return (socket, packet_received :: packets_received_rev, packets_to_send)
-      | _ -> Lwt.return (socket, packets_received_rev, packets_to_send)
+        Lwt.return (socket, packet_received :: packets_received_rev, control_packets_to_send)
+      | _ -> Lwt.return (socket, packets_received_rev, control_packets_to_send)
 
   (* Entry point *)
 
   let with_connection : Uri.t -> ?namespace:string -> ((Packet.t Lwt_stream.t) -> (Packet.t -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t =
     fun uri ?namespace f ->
-      (* packets recieved *)
+      (* packets received *)
       let (packets_recv_stream, push_packet_recv) =
         Lwt_stream.create () in
+
       (* packets to send *)
       let (packets_send_stream, push_packet_send) =
         Lwt_stream.create () in
       let send packet =
         push_packet_send (Some packet); Lwt.return_unit in
+
+      (* start the user thread *)
       let user_promise =
         f packets_recv_stream send in
+
+      (* create the socket *)
       let socket = create uri namespace in
+
       let sleep_until_packet_to_send () =
         Lwt_stream.peek packets_send_stream >>= fun _ ->
         Lwt_log.info ~section "Waking to send a packet"
       in
+
       let sleep_until_packet_received packet_stream =
         Lwt_stream.peek packet_stream >>= fun _ ->
         Lwt_log.info ~section "Waking to process a packet"
       in
+
       Engineio_client.Socket.with_connection uri
-        (fun packet_stream send_message ->
+        (fun eio_packet_stream send_eio_message ->
+
+           (* Flush packets from the user to the Engine.io socket, if the
+              Socket.io socket is connected.
+           *)
            let flush_user_packets socket =
              if socket.connected then
                packets_send_stream
@@ -256,37 +268,51 @@ module Socket = struct
                     packet
                     |> Packet.with_namespace ~nsp:socket.namespace
                     |> Parser.encode_packet
-                    |> send_message)
+                    |> send_eio_message)
              else
                Lwt_log.debug "Socket not connected: not flushing."
            in
-           let rec react_forever socket =
-             Lwt.choose
+
+           let rec maintain_connection socket =
+             (* Wait for something to do. *)
+             Lwt.pick
                (List.concat
                   [ if socket.connected then [sleep_until_packet_to_send ()] else []
-                  ; [ sleep_until_packet_received packet_stream ]
+                  ; [ sleep_until_packet_received eio_packet_stream ]
                   ]) >>= fun () ->
-             packet_stream
+
+             (* Process packets received from the Engine.io socket. *)
+             eio_packet_stream
              |> Lwt_stream.get_available
              |> Lwt_list.fold_left_s process_eio_packet (socket, [], [])
-             >>= fun (socket, packets_received_rev, packets_to_send) ->
+             >>= fun (socket, packets_received_rev, control_packets_to_send) ->
+
+             (* Push any Socket.io packets received to the user. *)
              let () =
                packets_received_rev
                |> List.rev
                |> List.iter (fun packet -> push_packet_recv (Some packet))
              in
-             packets_to_send
+
+             (* Push any Socket.io control packets to the Engine.io socket.*)
+             control_packets_to_send
              |> Lwt_list.iter_s
                (fun packet ->
-                  Parser.encode_packet packet |> send_message) >>= fun () ->
+                  Parser.encode_packet packet |> send_eio_message) >>= fun () ->
+
+             (* Flush user Socket.io packets to the Engine.io socket. *)
              flush_user_packets socket >>= fun () ->
-             react_forever socket
+
+             maintain_connection socket
            in
+
            Lwt.choose
-             [ react_forever socket
+             [ maintain_connection socket
              ; user_promise >>= fun _ -> Lwt.return_unit
              ] >>= fun () ->
-           Packet.DISCONNECT |> Parser.encode_packet |> send_message >>= fun () ->
+
+           Packet.DISCONNECT |> Parser.encode_packet |> send_eio_message >>= fun () ->
+
            user_promise
         )
 end
