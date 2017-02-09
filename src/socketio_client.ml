@@ -80,15 +80,15 @@ module Parser = struct
     let option_namespace : string option Angstrom.t =
       option None
         (char '/' *>
-         take_while1 (function | '[' | ',' -> false | _ -> true)
-         >>| fun namespace -> Some (Printf.sprintf "/%s" namespace))
+         (take_while1 (function | ',' -> false | _ -> true)
+          >>| fun namespace -> Some (Printf.sprintf "/%s" namespace))
+         <* char ',')
 
     let option_ack : int option Angstrom.t =
       option None (any_integer >>| fun ack_id -> Some ack_id)
 
     let packet_event : Packet.t Angstrom.t =
       option_namespace >>= fun namespace ->
-      option ' ' (char ',') *>
       option_ack >>= fun ack ->
       json_until_end_of_input >>= function
       | `List (`String event_name :: arguments) ->
@@ -97,7 +97,6 @@ module Parser = struct
 
     let packet_ack : Packet.t Angstrom.t =
       option_namespace >>= fun namespace ->
-      option ' ' (char ',') *>
       any_integer >>= fun ack_id ->
       json_until_end_of_input >>= function
       | `List arguments ->
@@ -135,16 +134,14 @@ module Parser = struct
           (Packet.int_of_t packet)
           (Util.Option.value ~default:"" namespace)
       | Packet.EVENT (event_name, data, ack, nsp) ->
-        Printf.sprintf "%i%s%s"
+        Printf.sprintf "%i%s%s%s"
           (Packet.int_of_t packet)
-          (String.concat ","
-             (List.concat
-                [ Util.Option.to_list nsp
-                ; ack
-                  |> Util.Option.map ~f:string_of_int
-                  |> Util.Option.to_list
-                ]
-             ))
+          (nsp
+           |> Util.Option.value_map ~default:""
+             ~f:(fun nsp -> Printf.sprintf "%s," nsp))
+          (ack
+           |> Util.Option.value_map ~default:""
+             ~f:string_of_int)
           (Yojson.Basic.to_string (`List (`String event_name :: data)))
       | Packet.ACK (data, ack_id, namespace) ->
         Printf.sprintf "%i%s%i%s"

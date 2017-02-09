@@ -63,7 +63,7 @@ let socketio_parser_suite =
          Printf.sprintf "%s%s"
            (nsp
             |> Util.Option.value_map ~default:""
-              ~f:(fun ns -> Printf.sprintf "nsp: %s" ns))
+              ~f:(fun ns -> Printf.sprintf "nsp:%s " ns))
            (args
             |> List.map Yojson.Basic.to_string
             |> String.concat ", ")
@@ -110,13 +110,13 @@ let socketio_parser_suite =
   let test_decode_event_namespace test_ctxt =
     assert_packet_equal
       (Packet.EVENT ("my_event", [], None, Some "/a-namespace"))
-      (Parser.decode_packet "2/a-namespace[\"my_event\"]")
+      (Parser.decode_packet "2/a-namespace,[\"my_event\"]")
   in
 
   let test_decode_event_namespace_ack test_ctxt =
     assert_packet_equal
-      (Packet.EVENT ("my_event", [], Some 3, Some "/a-namespace"))
-      (Parser.decode_packet "2/a-namespace,3[\"my_event\"]")
+      (Packet.EVENT ("my_event", [`String "my_arg"], Some 3, Some "/a-namespace"))
+      (Parser.decode_packet "2/a-namespace,3[\"my_event\",\"my_arg\"]")
   in
 
   let test_decode_ack test_ctxt =
@@ -129,6 +129,13 @@ let socketio_parser_suite =
     assert_packet_equal
       (Packet.ERROR "This is an error.")
       (Parser.decode_packet "4This is an error.")
+  in
+
+  let test_encode_event_namespace test_ctxt =
+    assert_string_equal
+      "2/a-namespace,[\"my_event\"]"
+      (Packet.event "my_event" [] ~namespace:"/a-namespace"
+       |> Parser.encode_packet)
   in
 
   let test_encode_event_namespace_ack test_ctxt =
@@ -154,6 +161,7 @@ let socketio_parser_suite =
   ; "Socketio_client.Parser.decode_packet EVENT with namespace and ack" >:: test_decode_event_namespace_ack
   ; "Socketio_client.Parser.decode_packet ACK" >:: test_decode_ack
   ; "Socketio_client.Parser.decode_packet ERROR" >:: test_decode_error
+  ; "Socketio_client.Parser.encode_packet EVENT with namespace" >:: test_encode_event_namespace
   ; "Socketio_client.Parser.encode_packet EVENT with namespace and ack" >:: test_encode_event_namespace_ack
   ; "Socketio_client.Parser.encode_packet ACK with namespace" >:: test_encode_ack_namespace
   ]
