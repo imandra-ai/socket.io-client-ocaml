@@ -3,7 +3,7 @@ module Packet : sig
     | CONNECT of string option
     | DISCONNECT
     | EVENT of string * Yojson.Basic.json list * int option * string option
-    | ACK of Yojson.Basic.json list * int
+    | ACK of Yojson.Basic.json list * int * string option
     | ERROR of string
     | BINARY_EVENT
     | BINARY_ACK
@@ -12,10 +12,12 @@ module Packet : sig
   val string_of_t : t -> string
 
   val event : string -> ?ack:int -> ?namespace:string -> Yojson.Basic.json list -> t
+  val ack : int -> ?namespace:string -> Yojson.Basic.json list -> t
 end
 
 module Parser : sig
   val decode_packet : string -> Packet.t
+  val encode_packet : Packet.t -> string
 end
 
 module Socket : sig

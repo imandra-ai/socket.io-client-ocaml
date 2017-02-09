@@ -17,6 +17,12 @@
 
 open OUnit2
 
+let assert_string_equal s1 s2 =
+  assert_equal
+    ~printer:(fun s -> s)
+    s1
+    s2
+
 let engineio_parser_suite =
   let open Engineio_client in
 
@@ -36,8 +42,7 @@ let engineio_parser_suite =
   in
 
   let test_encode_payload test_ctxt =
-    assert_equal
-      ~printer:(fun s -> s)
+    assert_string_equal
       "\000\006\2552probe"
       (Parser.encode_payload [(Packet.PING, Packet.P_String "probe")])
   in
@@ -116,7 +121,7 @@ let socketio_parser_suite =
 
   let test_decode_ack test_ctxt =
     assert_packet_equal
-      (Packet.ACK ([`String "arg_one"], 1))
+      (Packet.ACK ([`String "arg_one"], 1, None))
       (Parser.decode_packet "31[\"arg_one\"]")
   in
 
@@ -124,6 +129,20 @@ let socketio_parser_suite =
     assert_packet_equal
       (Packet.ERROR "This is an error.")
       (Parser.decode_packet "4This is an error.")
+  in
+
+  let test_encode_event_namespace_ack test_ctxt =
+    assert_string_equal
+      "2/a-namespace,3[\"my_event\"]"
+      (Packet.event "my_event" [] ~ack:3 ~namespace:"/a-namespace"
+       |> Parser.encode_packet)
+  in
+
+  let test_encode_ack_namespace test_ctxt =
+    assert_string_equal
+      "3/a-namespace,0[\"my_arg\"]"
+      (Packet.ack 0 [`String "my_arg"] ~namespace:"/a-namespace"
+       |> Parser.encode_packet)
   in
 
   [ "Socketio_client.Parser.decode_packet CONNECT" >:: test_decode_connect
@@ -135,6 +154,8 @@ let socketio_parser_suite =
   ; "Socketio_client.Parser.decode_packet EVENT with namespace and ack" >:: test_decode_event_namespace_ack
   ; "Socketio_client.Parser.decode_packet ACK" >:: test_decode_ack
   ; "Socketio_client.Parser.decode_packet ERROR" >:: test_decode_error
+  ; "Socketio_client.Parser.encode_packet EVENT with namespace and ack" >:: test_encode_event_namespace_ack
+  ; "Socketio_client.Parser.encode_packet ACK with namespace" >:: test_encode_ack_namespace
   ]
 
 

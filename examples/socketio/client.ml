@@ -34,7 +34,9 @@ let main () =
 
               | Packet.EVENT ("pls respond", [`String content], Some ack_id, _) ->
                 Lwt_io.printlf "responding to ack request %i" ack_id >>= fun () ->
-                send (Packet.ACK ([`String (Printf.sprintf "OCaml is replying to your message: %s" content)], ack_id)) >>= fun () ->
+                send (Packet.ack ack_id [`String (Printf.sprintf "OCaml is replying to your message: %s" content)]) >>= fun () ->
+
+                Lwt_io.printlf "sending event 'pls respond too' with ack %i" next_ack_id >>= fun () ->
                 send (Packet.event "pls respond too" [`String "I'm needy too"] ~ack:next_ack_id) >>= fun () ->
                 Lwt.return (next_ack_id + 1)
 
