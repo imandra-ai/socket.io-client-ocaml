@@ -62,7 +62,7 @@ let socketio_parser_suite =
        | Packet.EVENT (_, args, _, nsp) ->
          Printf.sprintf "%s%s"
            (nsp
-            |> Util.Option.value_map ~default:""
+            |> Eio_util.Option.value_map ~default:""
               ~f:(fun ns -> Printf.sprintf "nsp:%s " ns))
            (args
             |> List.map Yojson.Basic.to_string

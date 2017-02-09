@@ -132,7 +132,7 @@ module Parser = struct
       | Packet.CONNECT namespace ->
         Printf.sprintf "%i%s"
           (Packet.int_of_t packet)
-          (Util.Option.value ~default:"" namespace)
+          (Eio_util.Option.value ~default:"" namespace)
       | Packet.DISCONNECT ->
         Printf.sprintf "%i"
           (Packet.int_of_t packet)
@@ -140,17 +140,17 @@ module Parser = struct
         Printf.sprintf "%i%s%s%s"
           (Packet.int_of_t packet)
           (nsp
-           |> Util.Option.value_map ~default:""
+           |> Eio_util.Option.value_map ~default:""
              ~f:(fun nsp -> Printf.sprintf "%s," nsp))
           (ack
-           |> Util.Option.value_map ~default:""
+           |> Eio_util.Option.value_map ~default:""
              ~f:string_of_int)
           (Yojson.Basic.to_string (`List (`String event_name :: data)))
       | Packet.ACK (data, ack_id, namespace) ->
         Printf.sprintf "%i%s%i%s"
           (Packet.int_of_t packet)
           (namespace
-           |> Util.Option.value_map ~default:""
+           |> Eio_util.Option.value_map ~default:""
              ~f:(fun nsp -> Printf.sprintf "%s," nsp))
           ack_id
           (Yojson.Basic.to_string (`List data))

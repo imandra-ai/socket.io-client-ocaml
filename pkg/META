@@ -1,6 +1,6 @@
 description = "Engine.io client"
 version = "%%VERSION_NUM%%"
-requires = "cohttp.lwt lwt stringext websocket.lwt yojson"
+requires = "angstrom cohttp.lwt lwt stringext websocket.lwt yojson"
 
 archive(byte) = "engineio_client.cma"
 archive(native) = "engineio_client.cmxa"

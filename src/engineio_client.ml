@@ -122,7 +122,7 @@ module Parser = struct
 
   let decode_packet : bool -> string -> Packet.t =
     fun is_string data ->
-      match Util.String.split_at 1 data with
+      match Eio_util.String.split_at 1 data with
       | None ->
         (Packet.ERROR, Packet.P_String "No packet data")
       | Some (packet_type_string, rest) ->
@@ -150,7 +150,7 @@ module Parser = struct
   let decode_payload_as_binary : string -> Packet.t list =
     fun string ->
       let decode_data is_string packet_length string =
-        match Util.String.split_at packet_length string with
+        match Eio_util.String.split_at packet_length string with
         | None -> raise (Invalid_argument "Bad packet length")
         | Some (this_packet_data, rest) ->
           ( decode_packet is_string this_packet_data
@@ -158,7 +158,7 @@ module Parser = struct
           )
       in
       let rec decode_packet_length is_string length_digits_rev string =
-        match Util.String.uncons string with
+        match Eio_util.String.uncons string with
         | None ->
           raise (Invalid_argument "No payload length")
         | Some ('\255', rest) ->
@@ -174,7 +174,7 @@ module Parser = struct
           decode_packet_length is_string (c :: length_digits_rev) rest
       in
       let decode_one_packet string =
-        match Util.String.uncons string with
+        match Eio_util.String.uncons string with
         | None -> raise (Invalid_argument "Empty payload")
         | Some ('\000', rest) -> decode_packet_length true [] rest
         | Some ('\001', rest) -> decode_packet_length false [] rest
@@ -436,8 +436,8 @@ module Transport = struct
           ready_state = Open
         ; uri =
             t.uri
-            |> (Util.flip Uri.remove_query_param) "sid"
-            |> (Util.flip Uri.add_query_param) ("sid", [Parser.(handshake.sid)])
+            |> (Eio_util.flip Uri.remove_query_param) "sid"
+            |> (Eio_util.flip Uri.add_query_param) ("sid", [Parser.(handshake.sid)])
         }
 
     let on_close : t -> t =
@@ -446,7 +446,7 @@ module Transport = struct
           ready_state = Closed
         ; uri =
             t.uri
-            |> (Util.flip Uri.remove_query_param) "sid"
+            |> (Eio_util.flip Uri.remove_query_param) "sid"
         }
 
     let close : t -> t Lwt.t =
@@ -567,8 +567,8 @@ module Transport = struct
           in
           Lwt.catch
             (fun () -> recv () >>= react >>= fun packet_opt ->
-              log_receive_packets ~section (Util.Option.to_list packet_opt) >>= fun () ->
-              let () = Util.Option.iter ~f:(fun packet -> t.push_packet (Some packet)) packet_opt in
+              log_receive_packets ~section (Eio_util.Option.to_list packet_opt) >>= fun () ->
+              let () = Eio_util.Option.iter ~f:(fun packet -> t.push_packet (Some packet)) packet_opt in
               Lwt.return_unit
             )
             (fun exn ->
@@ -582,7 +582,7 @@ module Transport = struct
         ; connection = None
         ; uri =
             t.uri
-            |> (Util.flip Uri.remove_query_param) "sid"
+            |> (Eio_util.flip Uri.remove_query_param) "sid"
         }
 
     let close : t -> t Lwt.t =
@@ -851,7 +851,7 @@ module Socket = struct
     fun socket ->
       Lwt_log.debug_f ~section "Socket is %s %s"
         (string_of_ready_state socket.ready_state)
-        (Util.Option.value_map socket.handshake
+        (Eio_util.Option.value_map socket.handshake
            ~default:"(no handshake)"
            ~f:(fun handshake -> Format.sprintf "(%s)" (Parser.string_of_handshake handshake))) >>= fun () ->
       Lwt_log.debug_f ~section "Transport is %s (%s)"
@@ -1024,8 +1024,8 @@ module Socket = struct
             (List.concat
                [ if Lwt.is_sleeping user_promise then [user_promise >>= fun _ -> Lwt.return_unit] else []
                ; socket.probe_promise
-                 |> Util.Option.map ~f:(fun p -> p >>= fun _ -> Lwt.return_unit)
-                 |> Util.Option.to_list
+                 |> Eio_util.Option.map ~f:(fun p -> p >>= fun _ -> Lwt.return_unit)
+                 |> Eio_util.Option.to_list
                ; [ poll_promise
                  ; sleep_promise
                  ]
