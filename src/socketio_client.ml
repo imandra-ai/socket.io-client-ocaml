@@ -162,9 +162,19 @@ module Socket = struct
   let section =
     Lwt_log.Section.make "socketio.socket"
 
+  type ready_state =
+    | Connecting
+    | Connected
+    | Disconnected
+
+  let string_of_ready_state = function
+    | Connecting -> "Connecting"
+    | Connected -> "Connected"
+    | Disconnected -> "Disconnected"
+
   type t =
     { uri : Uri.t
-    ; connected : bool
+    ; ready_state : ready_state
     ; ids : int
     ; namespace : string option
     (* None means the default namespace, "/" *)
@@ -174,7 +184,7 @@ module Socket = struct
   let create : Uri.t -> string option -> t =
     fun uri namespace ->
       { uri = uri
-      ; connected = false
+      ; ready_state = Connecting
       ; ids = 0
       ; namespace = namespace
       ; acks = []
@@ -185,14 +195,24 @@ module Socket = struct
   let on_connect socket namespace =
     Lwt.return
       { socket with
-        connected =
-          namespace = socket.namespace
+        ready_state =
+          if namespace = socket.namespace then
+            Connected
+          else
+            socket.ready_state
+      }
+
+  let on_disconnect socket =
+    Lwt.return
+      { socket with
+        ready_state = Disconnected
       }
 
   let on_packet socket packet =
     Lwt_log.info_f ~section "on_packet %s" (Packet.string_of_t packet) >>= fun () ->
     match packet with
     | Packet.CONNECT namespace -> on_connect socket namespace
+    | Packet.DISCONNECT -> on_disconnect socket
     | _ -> Lwt.return socket
 
   (* Engine.io packet handlers *)
@@ -224,7 +244,7 @@ module Socket = struct
 
   (* Entry point *)
 
-  let with_connection : Uri.t -> ?namespace:string -> ((Packet.t Lwt_stream.t) -> (Packet.t -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t =
+  let with_connection : 'a. Uri.t -> ?namespace:string -> ((Packet.t Lwt_stream.t) -> (Packet.t -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t =
     fun uri ?namespace f ->
       (* packets received *)
       let (packets_recv_stream, push_packet_recv) =
@@ -260,7 +280,8 @@ module Socket = struct
               Socket.io socket is connected.
            *)
            let flush_user_packets socket =
-             if socket.connected then
+             match socket.ready_state with
+             | Connected ->
                packets_send_stream
                |> Lwt_stream.get_available
                |> Lwt_list.iter_s
@@ -269,17 +290,48 @@ module Socket = struct
                     |> Packet.with_namespace ~nsp:socket.namespace
                     |> Parser.encode_packet
                     |> send_eio_message)
-             else
-               Lwt_log.debug "Socket not connected: not flushing."
+             | _ ->
+               Lwt_log.debug_f ~section "Socket is %s: not flushing." (string_of_ready_state socket.ready_state)
            in
 
-           let rec maintain_connection socket =
+           let disconnect socket =
+             match socket.ready_state with
+             | Connected ->
+               Packet.DISCONNECT |> Parser.encode_packet |> send_eio_message >>= fun () ->
+               Lwt.return { socket with ready_state = Disconnected }
+             | _ ->
+               Lwt.return socket
+           in
+
+           let maybe_disconnect socket user_promise =
+             if Lwt.is_sleeping user_promise then
+               Lwt.return socket
+             else
+               (* User thread has finished; close the socket *)
+               Lwt_log.info ~section "User thread has finished; disconnecting the socket." >>= fun () ->
+               disconnect socket
+           in
+
+           let rec maintain_connection socket user_promise =
              (* Wait for something to do. *)
-             Lwt.pick
+             let sleep_promises =
+               Lwt.pick
+                 (List.concat
+                    [ (match socket.ready_state with
+                          | Connected -> [sleep_until_packet_to_send ()]
+                          | _ -> [])
+                    ; [ sleep_until_packet_received eio_packet_stream ]
+                    ])
+             in
+
+             Lwt.choose
                (List.concat
-                  [ if socket.connected then [sleep_until_packet_to_send ()] else []
-                  ; [ sleep_until_packet_received eio_packet_stream ]
+                  [ [ sleep_promises ]
+                  ; if Lwt.is_sleeping user_promise then [user_promise >>= fun _ -> Lwt.return_unit] else []
                   ]) >>= fun () ->
+
+             (* Explicitly cancel the sleep promises. *)
+             let () = Lwt.cancel sleep_promises in
 
              (* Process packets received from the Engine.io socket. *)
              eio_packet_stream
@@ -300,19 +352,22 @@ module Socket = struct
                (fun packet ->
                   Parser.encode_packet packet |> send_eio_message) >>= fun () ->
 
+             (* Disconnect if the user callback has returned. *)
+             maybe_disconnect socket user_promise >>= fun socket ->
+
              (* Flush user Socket.io packets to the Engine.io socket. *)
              flush_user_packets socket >>= fun () ->
 
-             maintain_connection socket
+             match socket.ready_state with
+             | Disconnected ->
+               Lwt_log.debug ~section "Socket is Disconnected, now waiting for user promise to terminate." >>= fun () ->
+               user_promise >>= fun x ->
+               Lwt_log.debug ~section "User promise has terminated." >>= fun () ->
+               Lwt.return x
+             | _ ->
+               maintain_connection socket user_promise
            in
 
-           Lwt.choose
-             [ maintain_connection socket
-             ; user_promise >>= fun _ -> Lwt.return_unit
-             ] >>= fun () ->
-
-           Packet.DISCONNECT |> Parser.encode_packet |> send_eio_message >>= fun () ->
-
-           user_promise
+           maintain_connection socket user_promise
         )
 end
