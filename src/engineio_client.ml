@@ -945,9 +945,10 @@ module Socket = struct
       Lwt_stream.get old_packet_stream >>= function
       | None
       | Some (Packet.CLOSE, _) ->
-        Lwt_log.info ~section "Finished forwarding packets."
+        Lwt_log.info ~section "Finished draining packets."
       | Some packet ->
-        Lwt_log.info_f ~section "Forwarding packet %s" (Packet.string_of_packet_type (fst packet)) >>= fun () ->
+        Lwt_log.info_f ~section "Draining packet %s"
+          (Packet.string_of_packet_type (fst packet)) >>= fun () ->
         let () = Transport.push_packet socket.transport (Some packet) in
         react_forever ()
     in
@@ -970,15 +971,19 @@ module Socket = struct
              transport = transport
            }
          in
-         Lwt_log.info ~section "Sending UPGRADE and waiting for old poll to complete..." >>= fun () ->
-         Lwt.join
-           [ write socket [Packet.upgrade]
-           ; poll_promise
-           ] >>= fun () ->
-         Lwt_log.info ~section "Draining old transport" >>= fun () ->
+
+         Lwt_log.info ~section "Canceling poll on old transport." >>= fun () ->
+         let () = Lwt.cancel poll_promise in
+         Eio_util.Lwt.ignore_exn (fun () -> poll_promise) >>= fun () ->
+
+         Lwt_log.info ~section "Sending UPGRADE." >>= fun () ->
+         write socket [Packet.upgrade] >>= fun () ->
+
+         Lwt_log.info ~section "Draining old transport." >>= fun () ->
          (* Terminate the old transport's packet stream *)
          let () = Transport.push_packet old_transport None in
          forward_until_close old_transport socket >>= fun () ->
+
          Lwt.return socket
        | None -> Lwt.return socket)
     | _ -> Lwt.return socket

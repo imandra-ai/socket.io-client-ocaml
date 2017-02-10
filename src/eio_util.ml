@@ -27,6 +27,13 @@ module List = struct
         loop index list []
 end
 
+module Lwt = struct
+  let ignore_exn : (unit -> unit Lwt.t) -> unit Lwt.t =
+    fun t ->
+      Lwt.catch t
+        (fun exn -> Lwt.return_unit)
+end
+
 module Option = struct
   let map : f:('a -> 'b) -> 'a option -> 'b option =
     fun ~f ->
