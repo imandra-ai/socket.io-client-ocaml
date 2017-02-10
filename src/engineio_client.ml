@@ -382,6 +382,7 @@ module Transport = struct
                      ~headers:(Header.init_with "accept" "application/json")
                      t.uri >>= process_response t)
                 (fun exn ->
+                   Lwt_log.error_f ~section "Poll failed: '%s'" (Printexc.to_string exn) >>= fun () ->
                    match exn with
                    | Failure msg ->
                      Lwt_log.error_f ~section "Poll failed: '%s'" msg
@@ -718,6 +719,7 @@ module Socket = struct
                ; transport = transport
                })
           (fun exn ->
+             Lwt_log.error_f ~section "Open failed: %s" (Printexc.to_string exn) >>= fun () ->
              match exn with
              | Transport.Polling.Polling_exception poll_error ->
                let is_transport_unknown =
@@ -749,6 +751,7 @@ module Socket = struct
                    }
                else
                  Lwt.fail exn
+             | _ -> Lwt.fail exn
           )
       | _ ->
         Lwt_log.warning_f ~section "Attempted open on %s socket"
