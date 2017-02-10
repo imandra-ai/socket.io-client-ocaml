@@ -978,8 +978,7 @@ module Socket = struct
            }
          in
 
-         Lwt_log.info ~section "Canceling poll on old transport." >>= fun () ->
-         let () = Lwt.cancel poll_promise in
+         Lwt_log.info ~section "Waiting for poll to complete on old transport." >>= fun () ->
          Eio_util.Lwt.ignore_exn (fun () -> poll_promise) >>= fun () ->
 
          Lwt_log.info ~section "Sending UPGRADE." >>= fun () ->
