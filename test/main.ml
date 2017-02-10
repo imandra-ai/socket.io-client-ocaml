@@ -41,6 +41,14 @@ let engineio_parser_suite =
       (Parser.decode_payload_as_binary "\000\001\2550")
   in
 
+  let test_decode_payload_two_packets test_ctxt =
+    assert_packets_equal
+      [ (Packet.MESSAGE, Packet.P_String "0")
+      ; (Packet.PONG, Packet.P_None)
+      ]
+      (Parser.decode_payload_as_binary "\000\002\25540\000\001\2553")
+  in
+
   let test_encode_payload test_ctxt =
     assert_string_equal
       "\000\006\2552probe"
@@ -48,6 +56,7 @@ let engineio_parser_suite =
   in
 
   [ "Engineio_client.Parser.decode_payload_as_binary" >:: test_decode_payload_as_binary
+  ; "Engineio_client.Parser.decode_payload_two_packets" >:: test_decode_payload_two_packets
   ; "Engineio_client.Parser.encode_payload" >:: test_encode_payload
   ]
 

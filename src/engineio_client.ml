@@ -149,8 +149,9 @@ module Parser = struct
         ]
 
     let frame_length : int Angstrom.t =
-      many_till any_uint8 (char '\255') >>| fun digits ->
+      many (not_char '\255') <* char '\255' >>| fun digits ->
       digits
+      |> List.map Char.code
       |> List.map string_of_int
       |> String.concat ""
       |> int_of_string
