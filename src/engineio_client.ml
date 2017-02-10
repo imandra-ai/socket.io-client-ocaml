@@ -120,72 +120,77 @@ module Parser = struct
 
   (* See https://github.com/socketio/engine.io-protocol#encoding *)
 
-  let decode_packet : bool -> string -> Packet.t =
-    fun is_string data ->
-      match Eio_util.String.split_at 1 data with
-      | None ->
-        (Packet.ERROR, Packet.P_String "No packet data")
-      | Some (packet_type_string, rest) ->
-        let packet_type =
-          packet_type_string
-          |> int_of_string
-          |> Packet.packet_type_of_int
+  type frame_encoding = [`String | `Binary]
+
+  module P = struct
+    open Angstrom
+    open Eio_util.Angstrom
+
+    let packet : frame_encoding -> Packet.t Angstrom.t =
+      fun frame_encoding ->
+        let packet_data_of_string data =
+          match frame_encoding with
+          | `String -> Packet.P_String data
+          | `Binary -> Packet.P_Binary (Lwt_bytes.of_string data)
         in
-        let packet_data =
-          match rest, is_string with
-          | "", _ -> Packet.P_None
-          | _, true -> Packet.P_String rest
-          | _, false -> Packet.P_Binary (Lwt_bytes.of_string rest)
+        let p_data =
+          (end_of_input >>| fun () -> Packet.P_None)
+          <|>
+          (any_string_until end_of_input >>| packet_data_of_string)
         in
-        ( packet_type, packet_data )
+        any_digit >>| Packet.packet_type_of_int >>= fun packet_type ->
+        p_data >>| fun packet_data ->
+        (packet_type, packet_data)
+
+    let frame_encoding_flag : frame_encoding Angstrom.t =
+      choice
+        [ (char '\000' >>| fun _ -> `String)
+        ; (char '\001' >>| fun _ -> `Binary)
+        ]
+
+    let frame_length : int Angstrom.t =
+      many_till any_uint8 (char '\255') >>| fun digits ->
+      digits
+      |> List.map string_of_int
+      |> String.concat ""
+      |> int_of_string
+
+    let frame : (frame_encoding * string) Angstrom.t =
+      frame_encoding_flag >>= fun frame_encoding ->
+      frame_length >>= fun len ->
+      take len >>| fun frame_data ->
+      (frame_encoding, frame_data)
+
+    let payload : (frame_encoding * string) list Angstrom.t =
+      many frame <* end_of_input
+  end
+
+  let decode_packet : frame_encoding -> string -> Packet.t =
+    fun frame_encoding data ->
+      match Angstrom.parse_only (P.packet frame_encoding) (`String data) with
+      | Ok packet ->
+        packet
+      | Error message ->
+        (Packet.ERROR, Packet.P_String (Printf.sprintf "Packet parse error: %s" message))
 
   let decode_packet_string : string -> Packet.t =
     fun data ->
-      decode_packet true data
+      decode_packet `String data
 
   let decode_packet_binary : string -> Packet.t =
     fun data ->
-      decode_packet false data
+      decode_packet `Binary data
 
   let decode_payload_as_binary : string -> Packet.t list =
-    fun string ->
-      let decode_data is_string packet_length string =
-        match Eio_util.String.split_at packet_length string with
-        | None -> raise (Invalid_argument "Bad packet length")
-        | Some (this_packet_data, rest) ->
-          ( decode_packet is_string this_packet_data
-          , rest
-          )
-      in
-      let rec decode_packet_length is_string length_digits_rev string =
-        match Eio_util.String.uncons string with
-        | None ->
-          raise (Invalid_argument "No payload length")
-        | Some ('\255', rest) ->
-            (* end of packet length section *)
-            let payload_length =
-              length_digits_rev
-              |> List.rev_map Char.code
-              |> List.map string_of_int
-              |> String.concat ""
-              |> int_of_string in
-            decode_data is_string payload_length rest
-        | Some (c, rest) ->
-          decode_packet_length is_string (c :: length_digits_rev) rest
-      in
-      let decode_one_packet string =
-        match Eio_util.String.uncons string with
-        | None -> raise (Invalid_argument "Empty payload")
-        | Some ('\000', rest) -> decode_packet_length true [] rest
-        | Some ('\001', rest) -> decode_packet_length false [] rest
-        | Some (c, rest) -> raise (Invalid_argument (Format.sprintf "Invalid string/binary flag: %c" c))
-      in
-      let rec go string =
-        match decode_one_packet string with
-        | (packet, "") -> [packet]
-        | (packet, string) -> packet :: go string
-      in
-      go string
+    fun data ->
+      match Angstrom.parse_only P.payload (`String data) with
+      | Error message ->
+        [(Packet.ERROR, Packet.P_String (Printf.sprintf "Payload parse error: %s" message))]
+      | Ok frames ->
+        frames
+        |> List.map
+          (fun (frame_encoding, frame_data) ->
+             decode_packet frame_encoding frame_data)
 
   let encode_packet : Packet.t -> string =
     fun (packet_type, packet_data) ->

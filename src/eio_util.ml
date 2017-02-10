@@ -4,6 +4,24 @@ let const : 'a -> 'b -> 'a =
 let flip : ('a -> 'b -> 'c) -> 'b -> 'a -> 'c =
   fun f a b -> f b a
 
+module Angstrom = struct
+  open Angstrom
+
+  let any_digit =
+    satisfy (function '0' .. '9' -> true | _ -> false) >>| fun c -> int_of_string (Stringext.of_char c)
+
+  let any_integer =
+    take_while1 (function '0' .. '9' -> true | _ -> false) >>| int_of_string
+
+  let any_string_until p =
+    many_till any_char p >>| Stringext.of_list
+
+  let json_until_end_of_input : Yojson.Basic.json Angstrom.t =
+    any_string_until end_of_input >>= fun arg_string ->
+    (try return (Yojson.Basic.from_string arg_string) with
+     | Yojson.Json_error msg -> fail msg)
+end
+
 module Char = struct
   let is_digit = function
     | '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' -> true

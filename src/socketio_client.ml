@@ -58,20 +58,7 @@ end
 module Parser = struct
   module P = struct
     open Angstrom
-
-    let any_digit =
-      satisfy (function '0' .. '9' -> true | _ -> false) >>| fun c -> int_of_string (Stringext.of_char c)
-
-    let any_integer =
-      take_while1 (function '0' .. '9' -> true | _ -> false) >>| int_of_string
-
-    let any_string_until p =
-      many_till any_char p >>| Stringext.of_list
-
-    let json_until_end_of_input : Yojson.Basic.json Angstrom.t =
-      any_string_until end_of_input >>= fun arg_string ->
-      (try return (Yojson.Basic.from_string arg_string) with
-       | Yojson.Json_error msg -> fail msg)
+    open Eio_util.Angstrom
 
     let packet_connect : Packet.t Angstrom.t =
       option None (many1 any_char >>| fun chars -> Some (Stringext.of_list chars))
