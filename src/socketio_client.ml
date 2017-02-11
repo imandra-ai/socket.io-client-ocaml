@@ -61,7 +61,8 @@ module Parser = struct
     open Eio_util.Angstrom
 
     let packet_connect : Packet.t Angstrom.t =
-      option None (many1 any_char >>| fun chars -> Some (Stringext.of_list chars))
+      option None
+        (many1 any_char >>| fun chars -> Some (Stringext.of_list chars))
       >>| fun namespace -> Packet.CONNECT namespace
 
     let option_namespace : string option Angstrom.t =
@@ -111,7 +112,8 @@ module Parser = struct
     fun data ->
       match Angstrom.parse_only P.packet (`String data) with
       | Ok packet -> packet
-      | Error message -> Packet.ERROR (Printf.sprintf "Error decoding packet: %s" message)
+      | Error message ->
+        Packet.ERROR (Printf.sprintf "Error decoding packet: %s" message)
 
   let encode_packet : Packet.t -> string =
     fun packet ->
@@ -142,7 +144,10 @@ module Parser = struct
           ack_id
           (Yojson.Basic.to_string (`List data))
       | _ ->
-        raise (Invalid_argument (Printf.sprintf "Encoding %s: not implemented" (Packet.string_of_t packet)))
+        raise
+          (Invalid_argument
+             (Printf.sprintf "Encoding %s: not implemented"
+                (Packet.string_of_t packet)))
 end
 
 module Socket = struct
@@ -196,7 +201,8 @@ module Socket = struct
       }
 
   let on_packet socket packet =
-    Lwt_log.info_f ~section "on_packet %s" (Packet.string_of_t packet) >>= fun () ->
+    Lwt_log.info_f ~section "on_packet %s"
+      (Packet.string_of_t packet) >>= fun () ->
     match packet with
     | Packet.CONNECT namespace -> on_connect socket namespace
     | Packet.DISCONNECT -> on_disconnect socket
@@ -222,24 +228,57 @@ module Socket = struct
     let packet = Packet.ERROR data in
     Lwt.return (socket, packet)
 
-  let process_eio_packet : t * Packet.t list * Packet.t list -> Engineio_client.Packet.t -> (t * Packet.t list * Packet.t list) Lwt.t =
-    fun (socket, packets_received_rev, control_packets_to_send) (packet_type, packet_data) ->
-      Lwt_log.info_f ~section "on_eio_packet %s" (Engineio_client.Packet.string_of_packet_type packet_type) >>= fun () ->
-      match packet_type with
+  let process_eio_packet
+    : t * Packet.t list * Packet.t list
+      -> Engineio_client.Packet.t
+      -> (t * Packet.t list * Packet.t list) Lwt.t =
+    fun acc eio_packet ->
+      let (socket, acc_packets_received_rev, acc_packets_to_send) = acc in
+      let (eio_packet_type, eio_packet_data) = eio_packet in
+
+      Lwt_log.info_f ~section "on_eio_packet %s"
+        (Engineio_client.Packet.string_of_packet_type
+           eio_packet_type) >>= fun () ->
+
+      match eio_packet_type with
       | Engineio_client.Packet.OPEN ->
         on_open socket
-        |> Lwt.map (fun (socket, open_packets_to_send) -> (socket, packets_received_rev, List.append control_packets_to_send open_packets_to_send))
+        |> Lwt.map (fun (socket, packets_to_send) ->
+            ( socket
+            , acc_packets_received_rev
+            , List.append acc_packets_to_send packets_to_send
+            ))
+
       | Engineio_client.Packet.MESSAGE ->
-        on_message socket packet_data >>= fun (socket, packet_received) ->
-        Lwt.return (socket, packet_received :: packets_received_rev, control_packets_to_send)
+        on_message socket eio_packet_data >>= fun (socket, packet_received) ->
+        Lwt.return
+          ( socket
+          , packet_received :: acc_packets_received_rev
+          , acc_packets_to_send
+          )
+
       | Engineio_client.Packet.ERROR ->
-        on_error socket packet_data >>= fun (socket, packet_received) ->
-        Lwt.return (socket, packet_received :: packets_received_rev, control_packets_to_send)
-      | _ -> Lwt.return (socket, packets_received_rev, control_packets_to_send)
+        on_error socket eio_packet_data >>= fun (socket, packet_received) ->
+        Lwt.return
+          ( socket
+          , packet_received :: acc_packets_received_rev
+          , acc_packets_to_send
+          )
+
+      | _ ->
+        Lwt.return
+          ( socket
+          , acc_packets_received_rev
+          , acc_packets_to_send
+          )
 
   (* Entry point *)
 
-  let with_connection : 'a. Uri.t -> ?namespace:string -> ((Packet.t Lwt_stream.t) -> (Packet.t -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t =
+  let with_connection
+    : 'a. Uri.t
+      -> ?namespace:string
+      -> ((Packet.t Lwt_stream.t) -> (Packet.t -> unit Lwt.t) -> 'a Lwt.t)
+      -> 'a Lwt.t =
     fun uri ?namespace f ->
       (* packets received *)
       let (packets_recv_stream, push_packet_recv) =
@@ -286,13 +325,16 @@ module Socket = struct
                     |> Parser.encode_packet
                     |> send_eio_message)
              | _ ->
-               Lwt_log.debug_f ~section "Socket is %s: not flushing." (string_of_ready_state socket.ready_state)
+               Lwt_log.debug_f ~section "Socket is %s: not flushing."
+                 (string_of_ready_state socket.ready_state)
            in
 
            let disconnect socket =
              match socket.ready_state with
              | Connected ->
-               Packet.DISCONNECT |> Parser.encode_packet |> send_eio_message >>= fun () ->
+               Packet.DISCONNECT
+               |> Parser.encode_packet
+               |> send_eio_message >>= fun () ->
                Lwt.return { socket with ready_state = Disconnected }
              | _ ->
                Lwt.return socket
@@ -303,7 +345,8 @@ module Socket = struct
                Lwt.return socket
              else
                (* User thread has finished; close the socket *)
-               Lwt_log.info ~section "User thread has finished; disconnecting the socket." >>= fun () ->
+               Lwt_log.info ~section
+                 "User thread has finished; disconnecting." >>= fun () ->
                disconnect socket
            in
 
@@ -322,7 +365,10 @@ module Socket = struct
              Lwt.choose
                (List.concat
                   [ [ sleep_promises ]
-                  ; if Lwt.is_sleeping user_promise then [user_promise >>= fun _ -> Lwt.return_unit] else []
+                  ; if Lwt.is_sleeping user_promise then
+                      [user_promise >>= fun _ -> Lwt.return_unit]
+                    else
+                      []
                   ]) >>= fun () ->
 
              (* Explicitly cancel the sleep promises. *)
@@ -355,9 +401,11 @@ module Socket = struct
 
              match socket.ready_state with
              | Disconnected ->
-               Lwt_log.debug ~section "Socket is Disconnected, now waiting for user promise to terminate." >>= fun () ->
+               Lwt_log.debug ~section
+                 "Socket is Disconnected, now waiting for user promise to terminate." >>= fun () ->
                user_promise >>= fun x ->
-               Lwt_log.debug ~section "User promise has terminated." >>= fun () ->
+               Lwt_log.debug ~section
+                 "User promise has terminated." >>= fun () ->
                Lwt.return x
              | _ ->
                maintain_connection socket user_promise
