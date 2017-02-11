@@ -217,6 +217,11 @@ module Socket = struct
     on_packet socket packet
     |> Lwt.map (fun socket -> (socket, packet))
 
+  let on_error socket packet_data =
+    let data = Engineio_client.Packet.string_of_packet_data packet_data in
+    let packet = Packet.ERROR data in
+    Lwt.return (socket, packet)
+
   let process_eio_packet : t * Packet.t list * Packet.t list -> Engineio_client.Packet.t -> (t * Packet.t list * Packet.t list) Lwt.t =
     fun (socket, packets_received_rev, control_packets_to_send) (packet_type, packet_data) ->
       Lwt_log.info_f ~section "on_eio_packet %s" (Engineio_client.Packet.string_of_packet_type packet_type) >>= fun () ->
@@ -226,6 +231,9 @@ module Socket = struct
         |> Lwt.map (fun (socket, open_packets_to_send) -> (socket, packets_received_rev, List.append control_packets_to_send open_packets_to_send))
       | Engineio_client.Packet.MESSAGE ->
         on_message socket packet_data >>= fun (socket, packet_received) ->
+        Lwt.return (socket, packet_received :: packets_received_rev, control_packets_to_send)
+      | Engineio_client.Packet.ERROR ->
+        on_error socket packet_data >>= fun (socket, packet_received) ->
         Lwt.return (socket, packet_received :: packets_received_rev, control_packets_to_send)
       | _ -> Lwt.return (socket, packets_received_rev, control_packets_to_send)
 
