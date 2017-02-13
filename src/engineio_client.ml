@@ -388,14 +388,13 @@ module Transport = struct
                      ~headers:(Header.init_with "accept" "application/json")
                      t.uri >>= process_response t)
                 (fun exn ->
-                   Lwt_log.error_f ~section "Poll failed: '%s'" (Printexc.to_string exn) >>= fun () ->
                    match exn with
-                   | Failure msg ->
-                     Lwt_log.error_f ~section "Poll failed: '%s'" msg
                    | Polling_exception poll_error ->
                      Lwt_log.error_f ~section "Poll failed: %i '%s'" poll_error.code poll_error.body >>= fun () ->
                      fail exn
-                   | exn -> fail exn)
+                   | _ ->
+                     Lwt_log.error_f ~section "Poll failed: '%s'" (Printexc.to_string exn) >>= fun () ->
+                     fail exn)
             ))
         )
 
@@ -712,53 +711,106 @@ module Socket = struct
       ; push_packet = push_packet
       }
 
+  (* TODO: Backoff should be part of the Socket.io client. *)
+  (* TODO: Allow the user to configure backoff values. *)
+  type backoff =
+    { backoff_attempt : int
+    ; backoff_max_attempts : int
+    ; backoff_sleep_increment : float
+    ; backoff_next_sleep_seconds : float
+    }
+
+  let init_backoff =
+    { backoff_attempt = 0
+    ; backoff_max_attempts = 5
+    ; backoff_sleep_increment = 0.5
+    ; backoff_next_sleep_seconds = 0.5
+    }
+
+  let next_backoff backoff =
+    if backoff.backoff_attempt = backoff.backoff_max_attempts then
+      None
+    else
+      Some
+        { backoff with
+          backoff_attempt =
+            backoff.backoff_attempt + 1
+        ; backoff_next_sleep_seconds =
+            backoff.backoff_next_sleep_seconds +.
+            (backoff.backoff_sleep_increment *.
+             (float_of_int backoff.backoff_attempt))
+        }
+
   let open_ : t -> t Lwt.t =
     fun socket ->
       match socket.ready_state with
       | Closed ->
-        Lwt.catch
-          (fun () ->
-             Transport.open_ socket.transport >>= fun transport ->
-             Lwt.return
-               { socket with
-                 ready_state = Opening
-               ; transport = transport
-               })
-          (fun exn ->
-             Lwt_log.error_f ~section "Open failed: %s" (Printexc.to_string exn) >>= fun () ->
-             match exn with
-             | Transport.Polling.Polling_exception poll_error ->
-               let is_transport_unknown =
-                 (* TODO: decode the poll_error as Json and use the error code.
-                    ("Transport unknown" is code 0.)
-                 *)
-                 try
-                   let _ =
-                     Str.search_forward (Str.regexp_string "Transport unknown") Transport.Polling.(poll_error.body) 0
-                   in true
-                 with
-                 | Not_found -> false
-               in
-               if is_transport_unknown then
-                 (* Try again with the websocket transport *)
-                 Lwt_log.info ~section
-                   "Polling transport was rejected, now opening with websocket transport." >>= fun () ->
-                 let socket =
-                   { socket with
-                     transport =
-                       Transport.create_websocket socket.uri
-                   }
+        let rec do_open socket backoff =
+
+          let do_backoff exn =
+            match next_backoff backoff with
+             | None -> Lwt.fail exn
+             | Some backoff ->
+               Lwt_log.info_f ~section "Backoff: sleeping %f seconds."
+                 backoff.backoff_next_sleep_seconds >>= fun () ->
+               Lwt_unix.sleep backoff.backoff_next_sleep_seconds >>= fun () ->
+               do_open socket backoff
+          in
+
+          Lwt.catch
+            (fun () ->
+               Transport.open_ socket.transport >>= fun transport ->
+               Lwt.return
+                 { socket with
+                   ready_state = Opening
+                 ; transport = transport
+                 })
+
+            (fun exn ->
+               Lwt_log.error_f ~section "Open failed: %s"
+                 (Printexc.to_string exn) >>= fun () ->
+
+               match exn with
+               | Transport.Polling.Polling_exception poll_error ->
+
+                 let is_transport_unknown =
+                   (* TODO: decode the poll_error as Json and use the error code.
+                       ("Transport unknown" is code 0.)
+                   *)
+                   try
+                     let _ =
+                       Str.search_forward
+                         (Str.regexp_string "Transport unknown")
+                         Transport.Polling.(poll_error.body)
+                         0
+                     in true
+                   with
+                   | Not_found -> false
                  in
-                 Transport.open_ socket.transport >>= fun transport ->
-                 Lwt.return
-                   { socket with
-                     ready_state = Opening
-                   ; transport = transport
-                   }
-               else
-                 Lwt.fail exn
-             | _ -> Lwt.fail exn
-          )
+
+                 if is_transport_unknown then
+                   (* Try again with the websocket transport *)
+                   Lwt_log.info ~section
+                     "Polling transport was rejected, now opening with websocket transport." >>= fun () ->
+                   let socket =
+                     { socket with
+                       transport =
+                         Transport.create_websocket socket.uri
+                     }
+                   in
+                   Transport.open_ socket.transport >>= fun transport ->
+                   Lwt.return
+                     { socket with
+                       ready_state = Opening
+                     ; transport = transport
+                     }
+                 else
+                   do_backoff exn
+
+               | _ -> do_backoff exn
+            )
+        in
+        do_open socket init_backoff
       | _ ->
         Lwt_log.warning_f ~section "Attempted open on %s socket"
           (string_of_ready_state socket.ready_state) >>= fun () ->
