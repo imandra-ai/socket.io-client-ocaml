@@ -15,6 +15,6 @@ let () =
   let examples = Conf.value c examples in
   Ok [ Pkg.mllib ~api:["Engineio_client"; "Socketio_client"] "src/engineio_client.mllib"
      ; Pkg.test ~dir:"src" "test/main"
-     ; Pkg.bin ~cond:examples "examples/engineio/client"
-     ; Pkg.bin ~cond:examples "examples/socketio/client"
+     ; Pkg.bin ~cond:examples "examples/engine.io/client"
+     ; Pkg.bin ~cond:examples "examples/socket.io/client"
      ]
