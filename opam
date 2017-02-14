@@ -1,12 +1,12 @@
 opam-version: "1.2"
-name: "engineio-client"
+name: "socketio-client"
 version: "~unknown"
-maintainer: "Matt Bray <mattjbray@gmail.com>"
-authors: "Matt Bray <mattjbray@gmail.com>"
-homepage: "https://github.com/AestheticIntegration/ocaml-engineio-client"
-bug-reports: "https://github.com/AestheticIntegration/ocaml-engineio-client/issues"
+maintainer: "Matt Bray <matt@aestheticintegration.com>"
+authors: "Matt Bray <matt@aestheticintegration.com>"
+homepage: "https://github.com/AestheticIntegration/socket.io-client-ocaml"
+bug-reports: "https://github.com/AestheticIntegration/socket.io-client-ocaml/issues"
 license: "APACHE-2.0"
-dev-repo: "https://github.com/AestheticIntegration/ocaml-engineio-client"
+dev-repo: "https://github.com/AestheticIntegration/socket.io-client-ocaml"
 build: [
   [ "ocaml" "pkg/pkg.ml" "build" "--pinned" "%{pinned}%" ]
 ]

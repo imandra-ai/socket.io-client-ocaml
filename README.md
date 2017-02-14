@@ -1,21 +1,25 @@
 ocaml-engineio-client
 =====================
 
-Engine.io client for OCaml.
+[Engine.io][1] and [Socket.io][2] clients for OCaml.
 
-See https://github.com/socketio/engine.io-protocol.
+[1]: https://github.com/socketio/engine.io-protocol
+[2]: https://github.com/socketio/socket.io-protocol
 
 ## Install
 
 With `opam`:
 
 ```
-opam pin add engineio-client https://github.com/AestheticIntegration/ocaml-engineio-client.git
+opam pin add socketio-client https://github.com/AestheticIntegration/socket.io-client-ocaml.git
 ```
 
 ## Usage
 
-See `examples/engineio/client.ml` and https://aestheticintegration.github.io/ocaml-engineio-client.
+Documentation is published at https://aestheticintegration.github.io/socket.io-client-ocaml.
+
+Also see `examples/engine.io/client.ml` and `examples/socket.io/client.ml` for
+usage examples.
 
 ## Development
 
@@ -35,6 +39,9 @@ Requires `node` and `npm`.
 make examples-setup
 make example-engineio-server
 make example-engineio-client
+
+make example-socketio-server
+make example-socketio-client
 ```
 
 ## Documentation

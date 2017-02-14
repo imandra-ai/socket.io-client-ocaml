@@ -36,7 +36,7 @@ example-socketio-client: examples
 .PHONY: dev-setup
 dev-setup:
 	opam pin add . --no-action --yes
-	opam install engineio-client --deps-only
+	opam install socketio-client --deps-only
 
 .PHONY: doc
 doc:
