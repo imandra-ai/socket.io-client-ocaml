@@ -1,5 +1,5 @@
-ocaml-engineio-client
-=====================
+socket.io-client-ocaml
+======================
 
 [Engine.io][1] and [Socket.io][2] clients for OCaml.
 
