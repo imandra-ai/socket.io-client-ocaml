@@ -18,27 +18,65 @@
 (*                                                                          *)
 
 module Packet : sig
+  (** Packets *)
+
+  (** {3 Packet types} *)
+
   type t =
     | CONNECT of string option
+    (** [CONNECT None]: the socket is connected on the default namespace ["/"].
+
+        [CONNECT (Some nsp)]: the socket is connected on the namespace [nsp].
+    *)
     | DISCONNECT
     | EVENT of string * Yojson.Basic.json list * int option * string option
+    (** [EVENT (event_name, args, ack, namespace)] *)
     | ACK of Yojson.Basic.json list * int * string option
+    (** [ACK (args, ack_id, namespace)] *)
     | ERROR of string
+    (** [ERROR message] *)
     | BINARY_EVENT
+    (** Not implemented. *)
     | BINARY_ACK
+    (** Not implemented. *)
 
+  (** The code for this packet's type. *)
   val int_of_t : t -> int
+
+  (** A human-readable string representation. *)
   val string_of_t : t -> string
+
+  (** {3 Helpers for constructing packets} *)
 
   val event : string -> ?ack:int -> ?namespace:string -> Yojson.Basic.json list -> t
   val ack : int -> ?namespace:string -> Yojson.Basic.json list -> t
 end
 
 module Parser : sig
+  (** Exposed for testing; not part of the public API. *)
+
   val decode_packet : string -> Packet.t
   val encode_packet : Packet.t -> string
 end
 
 module Socket : sig
+  (** Sockets *)
+
+  (** Connect to a Socket.io server.
+
+      [with_connection uri ~namespace f] opens a connection to the server at
+      [uri] on namespace [namespace].
+
+      [uri] will be something like ["http://localhost:3000/socket.io"].
+
+      If [namespace] is omitted, the default namespace (["/"]) is used.
+
+      The callback function [f] will be passed a [packet_stream] and a [send]
+      function as arguments. The [send] function can be used to send packets
+      over the socket.
+
+      When the callback function [f] terminates, the socket is closed, and the
+      result of [f] is returned.
+  *)
   val with_connection : Uri.t -> ?namespace:string -> ((Packet.t Lwt_stream.t) -> (Packet.t -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t
 end

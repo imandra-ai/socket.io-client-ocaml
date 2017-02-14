@@ -46,6 +46,8 @@ module Packet : sig
 end
 
 module Parser : sig
+  (** Exposed for testing; not part of the public API. *)
+
   val decode_payload_as_binary : string -> Packet.t list
   val encode_payload : Packet.t list -> string
 end
@@ -53,7 +55,7 @@ end
 module Socket : sig
   (** Sockets *)
 
-  (** Connect to an engine.io server
+  (** Connect to an Engine.io server.
 
       [with_connection uri f] opens a connection to the server at [uri].
 
