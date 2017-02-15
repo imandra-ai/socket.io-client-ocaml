@@ -7,6 +7,7 @@ homepage: "https://github.com/AestheticIntegration/socket.io-client-ocaml"
 bug-reports: "https://github.com/AestheticIntegration/socket.io-client-ocaml/issues"
 license: "APACHE-2.0"
 dev-repo: "https://github.com/AestheticIntegration/socket.io-client-ocaml"
+doc: "https://AestheticIntegration.github.io/socket.io-client-ocaml/doc"
 build: [
   [ "ocaml" "pkg/pkg.ml" "build" "--pinned" "%{pinned}%" ]
 ]

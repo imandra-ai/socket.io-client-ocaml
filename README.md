@@ -16,7 +16,7 @@ opam pin add socketio-client https://github.com/AestheticIntegration/socket.io-c
 
 ## Usage
 
-Documentation is published at https://aestheticintegration.github.io/socket.io-client-ocaml.
+Documentation is published at https://aestheticintegration.github.io/socket.io-client-ocaml/doc.
 
 Also see `examples/engine.io/client.ml` and `examples/socket.io/client.ml` for
 usage examples.
@@ -53,16 +53,11 @@ opam install topkg-care
 make doc
 ```
 
-To publish the generated documentation:
+To generate and publish documentation:
 
 ```
-git checkout gh-pages
-rm *.html *.stamp *.css
-mv _build/doc/api.docdir/* .
-rm -rf _build
-git add .
-git commit -m "Re-generate docs."
-git push origin gh-pages
+topkg distrib
+topkg publish doc
 ```
 
 ## TODO
