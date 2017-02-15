@@ -1,0 +1,114 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<link rel="stylesheet" href="style.css" type="text/css">
+<meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+<link rel="Start" href="index.html">
+<link rel="next" href="Socketio_client.Parser.html">
+<link rel="Up" href="Socketio_client.html">
+<link title="Index of types" rel=Appendix href="index_types.html">
+<link title="Index of values" rel=Appendix href="index_values.html">
+<link title="Index of modules" rel=Appendix href="index_modules.html">
+<link title="Engineio_client" rel="Chapter" href="Engineio_client.html">
+<link title="Socketio_client" rel="Chapter" href="Socketio_client.html"><link title="Packet types" rel="Section" href="#3_Packettypes">
+<link title="Helpers for constructing packets" rel="Section" href="#3_Helpersforconstructingpackets">
+<title>Socketio_client.Packet</title>
+</head>
+<body>
+<div class="navbar">&nbsp;<a class="up" href="Socketio_client.html" title="Socketio_client">Up</a>
+&nbsp;<a class="post" href="Socketio_client.Parser.html" title="Socketio_client.Parser">Next</a>
+</div>
+<h1>Module <a href="type_Socketio_client.Packet.html">Socketio_client.Packet</a></h1>
+
+<pre><span class="keyword">module</span> Packet: <code class="code"><span class="keyword">sig</span></code> <a href="Socketio_client.Packet.html">..</a> <code class="code"><span class="keyword">end</span></code></pre><hr width="100%">
+<br>
+Packets<br>
+<br>
+<h3 id="3_Packettypes">Packet types</h3><br>
+
+<pre><code><span id="TYPEt"><span class="keyword">type</span> <code class="type"></code>t</span> = </code></pre><table class="typetable">
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTt.CONNECT"><span class="constructor">CONNECT</span></span> <span class="keyword">of</span> <code class="type">string option</code></code></td>
+<td class="typefieldcomment" align="left" valign="top" ><code>(*</code></td><td class="typefieldcomment" align="left" valign="top" ><div class="info ">
+<code class="code"><span class="constructor">CONNECT</span> <span class="constructor">None</span></code>: the socket is connected on the default namespace <code class="code"><span class="string">"/"</span></code>.
+<p>
+
+        <code class="code"><span class="constructor">CONNECT</span> (<span class="constructor">Some</span> nsp)</code>: the socket is connected on the namespace <code class="code">nsp</code>.<br>
+</div>
+</td><td class="typefieldcomment" align="left" valign="bottom" ><code>*)</code></td>
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTt.DISCONNECT"><span class="constructor">DISCONNECT</span></span></code></td>
+
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTt.EVENT"><span class="constructor">EVENT</span></span> <span class="keyword">of</span> <code class="type">string * Yojson.Basic.json list * int option * string option</code></code></td>
+<td class="typefieldcomment" align="left" valign="top" ><code>(*</code></td><td class="typefieldcomment" align="left" valign="top" ><div class="info ">
+<code class="code"><span class="constructor">EVENT</span> (event_name, args, ack, namespace)</code><br>
+</div>
+</td><td class="typefieldcomment" align="left" valign="bottom" ><code>*)</code></td>
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTt.ACK"><span class="constructor">ACK</span></span> <span class="keyword">of</span> <code class="type">Yojson.Basic.json list * int * string option</code></code></td>
+<td class="typefieldcomment" align="left" valign="top" ><code>(*</code></td><td class="typefieldcomment" align="left" valign="top" ><div class="info ">
+<code class="code"><span class="constructor">ACK</span> (args, ack_id, namespace)</code><br>
+</div>
+</td><td class="typefieldcomment" align="left" valign="bottom" ><code>*)</code></td>
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTt.ERROR"><span class="constructor">ERROR</span></span> <span class="keyword">of</span> <code class="type">string</code></code></td>
+<td class="typefieldcomment" align="left" valign="top" ><code>(*</code></td><td class="typefieldcomment" align="left" valign="top" ><div class="info ">
+<code class="code"><span class="constructor">ERROR</span> message</code><br>
+</div>
+</td><td class="typefieldcomment" align="left" valign="bottom" ><code>*)</code></td>
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTt.BINARY_EVENT"><span class="constructor">BINARY_EVENT</span></span></code></td>
+<td class="typefieldcomment" align="left" valign="top" ><code>(*</code></td><td class="typefieldcomment" align="left" valign="top" ><div class="info ">
+Not implemented.<br>
+</div>
+</td><td class="typefieldcomment" align="left" valign="bottom" ><code>*)</code></td>
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTt.BINARY_ACK"><span class="constructor">BINARY_ACK</span></span></code></td>
+<td class="typefieldcomment" align="left" valign="top" ><code>(*</code></td><td class="typefieldcomment" align="left" valign="top" ><div class="info ">
+Not implemented.<br>
+</div>
+</td><td class="typefieldcomment" align="left" valign="bottom" ><code>*)</code></td>
+</tr></table>
+
+
+
+<pre><span id="VALint_of_t"><span class="keyword">val</span> int_of_t</span> : <code class="type"><a href="Socketio_client.Packet.html#TYPEt">t</a> -> int</code></pre><div class="info ">
+The code for this packet's type.<br>
+</div>
+
+<pre><span id="VALstring_of_t"><span class="keyword">val</span> string_of_t</span> : <code class="type"><a href="Socketio_client.Packet.html#TYPEt">t</a> -> string</code></pre><div class="info ">
+A human-readable string representation.<br>
+</div>
+<br>
+<h3 id="3_Helpersforconstructingpackets">Helpers for constructing packets</h3><br>
+
+<pre><span id="VALevent"><span class="keyword">val</span> event</span> : <code class="type">string -><br>       ?ack:int -><br>       ?namespace:string -> Yojson.Basic.json list -> <a href="Socketio_client.Packet.html#TYPEt">t</a></code></pre>
+<pre><span id="VALack"><span class="keyword">val</span> ack</span> : <code class="type">int -><br>       ?namespace:string -> Yojson.Basic.json list -> <a href="Socketio_client.Packet.html#TYPEt">t</a></code></pre></body></html>

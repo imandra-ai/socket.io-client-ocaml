@@ -1,0 +1,47 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<link rel="stylesheet" href="style.css" type="text/css">
+<meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+<link rel="Start" href="index.html">
+<link rel="previous" href="Engineio_client.Parser.html">
+<link rel="Up" href="Engineio_client.html">
+<link title="Index of types" rel=Appendix href="index_types.html">
+<link title="Index of values" rel=Appendix href="index_values.html">
+<link title="Index of modules" rel=Appendix href="index_modules.html">
+<link title="Engineio_client" rel="Chapter" href="Engineio_client.html">
+<link title="Socketio_client" rel="Chapter" href="Socketio_client.html"><title>Engineio_client.Socket</title>
+</head>
+<body>
+<div class="navbar"><a class="pre" href="Engineio_client.Parser.html" title="Engineio_client.Parser">Previous</a>
+&nbsp;<a class="up" href="Engineio_client.html" title="Engineio_client">Up</a>
+&nbsp;</div>
+<h1>Module <a href="type_Engineio_client.Socket.html">Engineio_client.Socket</a></h1>
+
+<pre><span class="keyword">module</span> Socket: <code class="code"><span class="keyword">sig</span></code> <a href="Engineio_client.Socket.html">..</a> <code class="code"><span class="keyword">end</span></code></pre><hr width="100%">
+<br>
+Sockets<br>
+
+<pre><span id="VALwith_connection"><span class="keyword">val</span> with_connection</span> : <code class="type">Uri.t -><br>       (<a href="Engineio_client.Packet.html#TYPEt">Engineio_client.Packet.t</a> Lwt_stream.t -> (string -> unit Lwt.t) -> 'a Lwt.t) -><br>       'a Lwt.t</code></pre><div class="info ">
+Connect to an Engine.io server.
+<p>
+
+      <code class="code">with_connection uri f</code> opens a connection to the server at <code class="code">uri</code>.
+<p>
+
+      <code class="code">uri</code> will be something like <code class="code"><span class="string">"http://localhost:3000/engine.io"</span></code>.
+<p>
+
+      The callback function <code class="code">f</code> will be passed a <code class="code">packet_stream</code> and a <code class="code">send</code>
+      function as arguments. The <code class="code">send</code> function can be used to send <code class="code"><span class="constructor">MESSAGE</span></code>
+      packets over the socket.
+<p>
+
+      Protocol-level packets, such as <code class="code"><span class="constructor">OPEN</span></code>, <code class="code"><span class="constructor">CLOSE</span></code>, <code class="code"><span class="constructor">PING</span></code>, <code class="code"><span class="constructor">PONG</span></code> and <code class="code"><span class="constructor">UPGRADE</span></code>, are handled by
+      <code class="code">with_connection</code> itself.
+<p>
+
+      When the callback function <code class="code">f</code> terminates, the socket is closed, and the
+      result of <code class="code">f</code> is returned.<br>
+</div>
+</body></html>

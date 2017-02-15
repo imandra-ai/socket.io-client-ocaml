@@ -1,0 +1,117 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<link rel="stylesheet" href="style.css" type="text/css">
+<meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+<link rel="Start" href="index.html">
+<link rel="next" href="Engineio_client.Parser.html">
+<link rel="Up" href="Engineio_client.html">
+<link title="Index of types" rel=Appendix href="index_types.html">
+<link title="Index of values" rel=Appendix href="index_values.html">
+<link title="Index of modules" rel=Appendix href="index_modules.html">
+<link title="Engineio_client" rel="Chapter" href="Engineio_client.html">
+<link title="Socketio_client" rel="Chapter" href="Socketio_client.html"><title>Engineio_client.Packet</title>
+</head>
+<body>
+<div class="navbar">&nbsp;<a class="up" href="Engineio_client.html" title="Engineio_client">Up</a>
+&nbsp;<a class="post" href="Engineio_client.Parser.html" title="Engineio_client.Parser">Next</a>
+</div>
+<h1>Module <a href="type_Engineio_client.Packet.html">Engineio_client.Packet</a></h1>
+
+<pre><span class="keyword">module</span> Packet: <code class="code"><span class="keyword">sig</span></code> <a href="Engineio_client.Packet.html">..</a> <code class="code"><span class="keyword">end</span></code></pre><hr width="100%">
+<br>
+Packets<br>
+
+<pre><code><span id="TYPEpacket_type"><span class="keyword">type</span> <code class="type"></code>packet_type</span> = </code></pre><table class="typetable">
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTpacket_type.OPEN"><span class="constructor">OPEN</span></span></code></td>
+
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTpacket_type.CLOSE"><span class="constructor">CLOSE</span></span></code></td>
+
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTpacket_type.PING"><span class="constructor">PING</span></span></code></td>
+
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTpacket_type.PONG"><span class="constructor">PONG</span></span></code></td>
+
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTpacket_type.MESSAGE"><span class="constructor">MESSAGE</span></span></code></td>
+
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTpacket_type.UPGRADE"><span class="constructor">UPGRADE</span></span></code></td>
+
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTpacket_type.NOOP"><span class="constructor">NOOP</span></span></code></td>
+
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTpacket_type.ERROR"><span class="constructor">ERROR</span></span></code></td>
+
+</tr></table>
+
+
+
+<pre><code><span id="TYPEpacket_data"><span class="keyword">type</span> <code class="type"></code>packet_data</span> = </code></pre><table class="typetable">
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTpacket_data.P_None"><span class="constructor">P_None</span></span></code></td>
+
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTpacket_data.P_String"><span class="constructor">P_String</span></span> <span class="keyword">of</span> <code class="type">string</code></code></td>
+
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code><span class="keyword">|</span></code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELTpacket_data.P_Binary"><span class="constructor">P_Binary</span></span> <span class="keyword">of</span> <code class="type">Lwt_bytes.t</code></code></td>
+
+</tr></table>
+
+
+
+<pre><span id="TYPEt"><span class="keyword">type</span> <code class="type"></code>t</span> = <code class="type"><a href="Engineio_client.Packet.html#TYPEpacket_type">packet_type</a> * <a href="Engineio_client.Packet.html#TYPEpacket_data">packet_data</a></code> </pre>
+
+
+<pre><span id="VALstring_of_t"><span class="keyword">val</span> string_of_t</span> : <code class="type"><a href="Engineio_client.Packet.html#TYPEt">t</a> -> string</code></pre>
+<pre><span id="VALstring_of_packet_type"><span class="keyword">val</span> string_of_packet_type</span> : <code class="type"><a href="Engineio_client.Packet.html#TYPEpacket_type">packet_type</a> -> string</code></pre>
+<pre><span id="VALpacket_type_of_int"><span class="keyword">val</span> packet_type_of_int</span> : <code class="type">int -> <a href="Engineio_client.Packet.html#TYPEpacket_type">packet_type</a></code></pre>
+<pre><span id="VALint_of_packet_type"><span class="keyword">val</span> int_of_packet_type</span> : <code class="type"><a href="Engineio_client.Packet.html#TYPEpacket_type">packet_type</a> -> int</code></pre>
+<pre><span id="VALstring_of_packet_data"><span class="keyword">val</span> string_of_packet_data</span> : <code class="type"><a href="Engineio_client.Packet.html#TYPEpacket_data">packet_data</a> -> string</code></pre></body></html>
