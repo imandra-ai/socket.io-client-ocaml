@@ -38,6 +38,10 @@ dev-setup:
 	opam pin add socketio-client . --no-action --yes
 	opam install socketio-client --deps-only
 
+.PHONY: clean
+clean:
+	ocaml pkg/pkg.ml clean
+
 .PHONY: doc
 doc:
 	topkg doc --reload-browser
