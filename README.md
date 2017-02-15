@@ -64,3 +64,13 @@ git add .
 git commit -m "Re-generate docs."
 git push origin gh-pages
 ```
+
+## TODO
+
+- Engine.io: Sending/receiving binary messages is largely un-tested.
+- Socket.io: [Auto-reconnection][3] (a simple back-off strategy for the initial
+  connection is currently implemented in the Engine.io client.)
+- Socket.io: [Binary support][4]
+
+[3]: https://github.com/socketio/socket.io#auto-reconnection-support
+[4]: https://github.com/socketio/socket.io#binary-support

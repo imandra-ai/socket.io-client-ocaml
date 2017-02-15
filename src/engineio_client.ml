@@ -1031,6 +1031,9 @@ module Socket = struct
          in
 
          Lwt_log.info ~section "Waiting for poll to complete on old transport." >>= fun () ->
+         (* NOTE: Here we are relying on the Engine.io server to send a packet
+            on the old transport (usually a NOOP)
+         *)
          Eio_util.Lwt.ignore_exn (fun () -> poll_promise) >>= fun () ->
 
          Lwt_log.info ~section "Sending UPGRADE." >>= fun () ->

@@ -17,13 +17,6 @@
 
 open Lwt.Infix
 
-(* Still to implement:
-
-   - Re-connection, back-off, etc.
-   - Multiplexing: Connecting to and disconnecting from namespaces.
-   - Binary events/acks.
-*)
-
 module Packet = struct
   type t =
     | CONNECT of string option
