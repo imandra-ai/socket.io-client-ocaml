@@ -384,9 +384,13 @@ module Transport = struct
               Lwt_log.debug_f ~section "GET '%s'" (Uri.to_string t.uri) >>= fun () ->
               catch
                 (fun () ->
-                   Client.get
-                     ~headers:(Header.init_with "accept" "application/json")
-                     t.uri >>= process_response t)
+                   Lwt.pick
+                     [ Lwt_unix.timeout 1.0
+                     ; Client.get
+                         ~headers:(Header.init_with "accept" "application/json")
+                         t.uri >>= process_response t
+                     ]
+                )
                 (fun exn ->
                    match exn with
                    | Polling_exception poll_error ->
