@@ -774,42 +774,38 @@ module Socket = struct
                Lwt_log.error_f ~section "Open failed: %s"
                  (Printexc.to_string exn) >>= fun () ->
 
+               let is_transport_unknown_error poll_error =
+                 (* TODO: decode the poll_error as Json and use the error code.
+                     ("Transport unknown" is code 0.)
+                 *)
+                 try
+                   let _ =
+                     Str.search_forward
+                       (Str.regexp_string "Transport unknown")
+                       Transport.Polling.(poll_error.body)
+                       0
+                   in true
+                 with
+                 | Not_found -> false
+               in
+
                match exn with
-               | Transport.Polling.Polling_exception poll_error ->
-
-                 let is_transport_unknown =
-                   (* TODO: decode the poll_error as Json and use the error code.
-                       ("Transport unknown" is code 0.)
-                   *)
-                   try
-                     let _ =
-                       Str.search_forward
-                         (Str.regexp_string "Transport unknown")
-                         Transport.Polling.(poll_error.body)
-                         0
-                     in true
-                   with
-                   | Not_found -> false
+               | Transport.Polling.Polling_exception poll_error when is_transport_unknown_error poll_error ->
+                 (* Try again with the websocket transport *)
+                 Lwt_log.info ~section
+                   "Polling transport was rejected, now opening with websocket transport." >>= fun () ->
+                 let socket =
+                   { socket with
+                     transport =
+                       Transport.create_websocket socket.uri
+                   }
                  in
-
-                 if is_transport_unknown then
-                   (* Try again with the websocket transport *)
-                   Lwt_log.info ~section
-                     "Polling transport was rejected, now opening with websocket transport." >>= fun () ->
-                   let socket =
-                     { socket with
-                       transport =
-                         Transport.create_websocket socket.uri
-                     }
-                   in
-                   Transport.open_ socket.transport >>= fun transport ->
-                   Lwt.return
-                     { socket with
-                       ready_state = Opening
-                     ; transport = transport
-                     }
-                 else
-                   do_backoff exn
+                 Transport.open_ socket.transport >>= fun transport ->
+                 Lwt.return
+                   { socket with
+                     ready_state = Opening
+                   ; transport = transport
+                   }
 
                | _ -> do_backoff exn
             )
