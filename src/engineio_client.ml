@@ -726,7 +726,7 @@ module Socket = struct
 
   let init_backoff =
     { backoff_attempt = 0
-    ; backoff_max_attempts = 5
+    ; backoff_max_attempts = 7
     ; backoff_sleep_increment = 0.5
     ; backoff_next_sleep_seconds = 0.5
     }
