@@ -308,13 +308,15 @@ module Socket = struct
       let socket = create uri namespace in
 
       let sleep_until_packet_to_send () =
+        Lwt_log.debug ~section "Sleeping until we have a packet to send." >>= fun () ->
         Lwt_stream.peek packets_send_stream >>= fun _ ->
-        Lwt_log.info ~section "Waking to send a packet"
+        Lwt_log.debug ~section "Waking to send a packet."
       in
 
       let sleep_until_packet_received packet_stream =
+        Lwt_log.debug ~section "Sleeping until we have a packet to process." >>= fun () ->
         Lwt_stream.peek packet_stream >>= fun _ ->
-        Lwt_log.info ~section "Waking to process a packet"
+        Lwt_log.debug ~section "Waking to process a packet."
       in
 
       Engineio_client.Socket.with_connection uri
@@ -347,6 +349,8 @@ module Socket = struct
                |> send_eio_message >>= fun () ->
                Lwt.return { socket with ready_state = Disconnected }
              | _ ->
+               Lwt_log.debug_f ~section "Socket is %s: not disconnecting."
+                 (string_of_ready_state socket.ready_state) >>= fun () ->
                Lwt.return socket
            in
 
