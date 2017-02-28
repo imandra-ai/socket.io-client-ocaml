@@ -316,7 +316,7 @@ module Transport = struct
     type t =
       { ready_state : ready_state
       ; uri : Uri.t
-      ; packets : Packet.t Lwt_stream.t
+      ; packet_stream : Packet.t Lwt_stream.t
       ; push_packet : Packet.t option -> unit
       }
 
@@ -324,14 +324,12 @@ module Transport = struct
 
     let create : Uri.t -> t =
       fun uri ->
-        let packets, push_packet = Lwt_stream.create () in
+        let packet_stream, push_packet = Lwt_stream.create () in
         { ready_state = Closed
         ; uri =
             Uri.add_query_param uri ("transport", [name])
-        ; packets =
-            packets
-        ; push_packet =
-            push_packet
+        ; packet_stream
+        ; push_packet
         }
 
     let log_packet : Packet.t -> unit Lwt.t =
@@ -475,7 +473,7 @@ module Transport = struct
       { ready_state : ready_state
       ; uri : Uri.t
       ; connection : ((unit -> Frame.t Lwt.t) * (Frame.t -> unit Lwt.t)) option
-      ; packets : Packet.t Lwt_stream.t
+      ; packet_stream : Packet.t Lwt_stream.t
       ; push_packet : Packet.t option -> unit
       }
 
@@ -483,12 +481,12 @@ module Transport = struct
 
     let create : Uri.t -> t =
       fun uri ->
-        let packets, push_packet = Lwt_stream.create () in
+        let packet_stream, push_packet = Lwt_stream.create () in
         { ready_state = Closed
         ; uri = Uri.add_query_param uri ("transport", [name])
         ; connection = None
-        ; packets = packets
-        ; push_packet = push_packet
+        ; packet_stream
+        ; push_packet
         }
 
     let open_ : t -> t Lwt.t =
@@ -653,9 +651,9 @@ module Transport = struct
   let packet_stream : t -> Packet.t Lwt_stream.t =
     function
     | Polling polling ->
-      Polling.(polling.packets)
+      Polling.(polling.packet_stream)
     | WebSocket websocket ->
-      WebSocket.(websocket.packets)
+      WebSocket.(websocket.packet_stream)
 
   let push_packet : t -> Packet.t option -> unit =
     fun t packet ->
@@ -836,7 +834,7 @@ module Socket = struct
         Lwt_log.info ~section "Probing websocket transport..." >>= fun () ->
         write websocket [Packet.ping_probe] >>= fun () ->
         receive websocket >>= fun () ->
-        (Lwt_stream.get websocket.packets >>= function
+        (Lwt_stream.get websocket.packet_stream >>= function
           | Some (Packet.PONG, Packet.P_String "probe") ->
             Lwt_log.info ~section "Ok to upgrade." >>= fun () ->
             Lwt.return (Some (Transport.WebSocket websocket))
