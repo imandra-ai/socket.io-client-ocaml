@@ -17,6 +17,8 @@
 (* limitations under the License.                                           *)
 (*                                                                          *)
 
+(** {3 Public APIs} *)
+
 module Packet : sig
   (** Packets *)
 
@@ -45,20 +47,6 @@ module Packet : sig
   val string_of_packet_data : packet_data -> string
 end
 
-module Parser : sig
-  (** Exposed for testing; not part of the public API. *)
-
-  val decode_payload_as_binary : string -> Packet.t list
-  val encode_payload : Packet.t list -> string
-
-  type handshake =
-    { sid : string
-    ; ping_interval : int
-    ; ping_timeout : int
-    ; upgrades : string list
-    }
-end
-
 module Socket : sig
   (** Sockets *)
 
@@ -81,12 +69,32 @@ module Socket : sig
   val with_connection : Uri.t -> ((Packet.t Lwt_stream.t) -> (string -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t
 end
 
+(** {3 Private APIs} *)
+
+(** Exposed for testing; not part of the public API. *)
+
+module Parser : sig
+  (** Exposed for testing; not part of the public API. *)
+
+  val decode_payload_as_binary : string -> Packet.t list
+  val encode_payload : Packet.t list -> string
+
+  type handshake =
+    { sid : string
+    ; ping_interval : int
+    ; ping_timeout : int
+    ; upgrades : string list
+    }
+end
+
 type ready_state =
   | Opening
   | Open
   | Closed
 
 module type Transport = sig
+  (** Exposed for testing; not part of the public API. *)
+
   type t
 
   val create_polling : Uri.t -> t
