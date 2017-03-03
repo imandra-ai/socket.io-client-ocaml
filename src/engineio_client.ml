@@ -1126,7 +1126,13 @@ module Make_Socket(Transport : Transport) = struct
           *)
           Lwt.choose
             (List.concat
-               [ if Lwt.is_sleeping user_promise then [user_promise >>= fun _ -> Lwt.return_unit] else []
+               [ if Lwt.is_sleeping user_promise then
+                   [ Lwt.catch
+                       (fun () -> user_promise >>= fun _ -> Lwt.return_unit)
+                       (fun exn -> Lwt.return_unit)
+                   ]
+                 else
+                   []
                ; socket.probe_promise
                  |> Eio_util.Option.map ~f:(fun p -> p >>= fun _ -> Lwt.return_unit)
                  |> Eio_util.Option.to_list
