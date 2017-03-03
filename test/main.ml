@@ -17,6 +17,13 @@
 
 open OUnit2
 
+let () =
+  Lwt_log.default :=
+    Lwt_log.channel
+      ~template:"$(date).$(milliseconds) [$(section)] $(level): $(message)"
+      ~close_mode:`Close
+      ~channel:Lwt_io.stdout ()
+
 let assert_string_equal s1 s2 =
   assert_equal
     ~printer:(fun s -> s)
@@ -62,10 +69,17 @@ let engineio_parser_suite =
 
 let engineio_socket_suite =
   let open Engineio_client in
+  let open Lwt.Infix in
 
-  let packet_stream, push_packet = Lwt_stream.create () in
-
-  let module Mock_Transport : Transport = struct
+  let module Mock_Transport
+      (In : sig
+        val packet_stream : Packet.t Lwt_stream.t
+        val push_packet : Packet.t option -> unit
+      end)
+      (Out : sig
+        val packet_stream : Packet.t Lwt_stream.t
+        val push_packet : Packet.t option -> unit
+      end) : Transport = struct
     type mock_type = Polling | WebSocket
 
     type t =
@@ -78,8 +92,8 @@ let engineio_socket_suite =
     let create_mock mock_type =
       { mock_type
       ; ready_state = Closed
-      ; packet_stream
-      ; push_packet
+      ; packet_stream = In.packet_stream
+      ; push_packet = In.push_packet
       }
 
     let create_polling _ = create_mock Polling
@@ -95,9 +109,15 @@ let engineio_socket_suite =
     let push_packet t = t.push_packet
 
     let open_ t = Lwt.return { t with ready_state = Opening }
-    let write t packets = Lwt.return_unit
-    let receive t = Lwt.return_unit
-    let close t = Lwt.return { t with ready_state = Closed }
+    let write t packets =
+      packets
+      |> List.iter (fun packet -> Out.push_packet (Some packet))
+      |> Lwt.return
+    let receive t =
+      Lwt_stream.peek In.packet_stream >>= fun _ -> Lwt.return_unit
+    let close t =
+      Out.push_packet (Some (Packet.CLOSE, Packet.P_None));
+      Lwt.return { t with ready_state = Closed }
 
     let on_open t handshake = { t with ready_state = Open }
     let on_close t = { t with ready_state = Closed }
@@ -117,39 +137,111 @@ let engineio_socket_suite =
   end
   in
 
-  let module Socket = Make_Socket(Mock_Transport) in
+  let handshake_json =
+    `Assoc
+      [ ("sid", `String "some-sid")
+      ; ("upgrades", `List [])
+      ; ("pingInterval", `Int 25000)
+      ; ("pingTimeout", `Int 60000)
+      ]
+  in
+
+  let open_packet =
+    ( Packet.OPEN
+    , Packet.P_String (Yojson.Basic.to_string handshake_json)
+    )
+  in
 
   let test_connect test_ctxt =
+    let module In = struct
+      let packet_stream, push_packet = Lwt_stream.create ()
+    end in
+
+    let module Out = struct
+      let packet_stream, push_packet = Lwt_stream.create ()
+    end in
+
+    let module Socket = Make_Socket(Mock_Transport(In)(Out)) in
+
     let packet =
       Lwt_main.run
         (Socket.with_connection Uri.empty
-           Lwt.Infix.(fun user_packet_stream user_push_packet ->
-               let handshake_json =
-                 `Assoc
-                   [ ("sid", `String "some-sid")
-                   ; ("upgrades", `List [])
-                   ; ("pingInterval", `Int 25000)
-                   ; ("pingTimeout", `Int 60000)
-                   ]
-               in
-               push_packet
-                 (Some ( Packet.OPEN
-                       , Packet.P_String (Yojson.Basic.to_string handshake_json)
-                       ))
-               |> Lwt.return >>= fun () ->
-               Lwt.pick
-                 [ Lwt_unix.timeout 1.0
-                 ; Lwt_stream.get user_packet_stream
-                 ]
-             ))
+           (fun user_packet_stream user_push_packet ->
+              In.push_packet (Some open_packet) |> Lwt.return >>= fun () ->
+              Lwt.pick
+                [ Lwt_unix.timeout 1.0
+                ; Lwt_stream.get user_packet_stream
+                ]
+           ))
     in
+
     match packet with
     | None -> assert_failure "End of packet stream?"
     | Some (Packet.OPEN,_) -> ()
-    | Some (packet,_) -> assert_failure (Printf.sprintf "Unexpected packet: %s" (Packet.string_of_packet_type packet))
+    | Some (packet,_) ->
+      packet
+      |> Packet.string_of_packet_type
+      |> Printf.sprintf "Unexpected packet: %s"
+      |> assert_failure
   in
 
-  [ "Engineio_client.Socket.with_connection" >:: test_connect ]
+  let test_close_sent_on_cancel test_ctxt =
+    let module In = struct
+      let packet_stream, push_packet = Lwt_stream.create ()
+    end in
+
+    let module Out = struct
+      let packet_stream, push_packet = Lwt_stream.create ()
+    end in
+
+    let module Socket = Make_Socket(Mock_Transport(In)(Out)) in
+
+    let waiter, wakener = Lwt.task () in
+
+    let socket_thread =
+      Socket.with_connection Uri.empty
+        (fun user_packet_stream user_push_packet ->
+           In.push_packet (Some open_packet) |> Lwt.return >>= fun () ->
+           Lwt.pick
+             [ (Lwt_unix.sleep 2.0 >>= fun () ->
+                Lwt_log.notice "User thread finished successfully.")
+             ; waiter
+             ]
+        )
+    in
+
+    let () =
+      Lwt.async
+        (fun () ->
+           Lwt_unix.sleep 0.1 >>= fun () ->
+           Lwt.wakeup_exn wakener Lwt.Canceled |> Lwt.return
+        )
+    in
+
+    let sent_packets =
+      Lwt_main.run
+        (Lwt.catch
+           (fun () -> socket_thread)
+           (fun exn -> Lwt.return_unit) >>= fun () ->
+         Out.push_packet None |> Lwt.return >>= fun () ->
+         Lwt_stream.to_list Out.packet_stream)
+    in
+
+    let printer ps =
+      ps
+      |> List.map Packet.string_of_packet_type
+      |> String.concat ","
+    in
+
+    assert_equal ~printer
+      [Packet.PING ; Packet.CLOSE]
+      (List.map fst sent_packets)
+  in
+
+  [ "Engineio_client.Socket.with_connection" >:: test_connect
+  ; "Engineio_client.Socket.with_connection closes when the user thread is canceled"
+    >:: test_close_sent_on_cancel
+  ]
 
 let socketio_parser_suite =
   let open Socketio_client in
