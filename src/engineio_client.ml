@@ -292,7 +292,40 @@ module Parser = struct
         )
 end
 
-module Transport = struct
+module type Transport = sig
+  type t
+
+  val create_polling : Uri.t -> t
+  val create_websocket : Uri.t -> t
+
+  val name_of_t : t -> string
+  val ready_state_of_t : t -> ready_state
+  val packet_stream_of_t : t -> Packet.t Lwt_stream.t
+  val push_packet : t -> Packet.t option -> unit
+
+  val open_ : t -> t Lwt.t
+  val write : t -> Packet.t list -> unit Lwt.t
+  val receive : t -> unit Lwt.t
+  val close : t -> t Lwt.t
+
+  val on_open : t -> Parser.handshake -> t
+  val on_close : t -> t
+
+  module Polling : sig
+    type poll_error =
+      { code : int
+      ; body : string
+      }
+
+    exception Polling_exception of poll_error
+  end
+
+  module WebSocket : sig
+    val name : string
+  end
+end
+
+module Transport : Transport = struct
   let log_receive_packets : section:Lwt_log.section -> Packet.t list -> unit Lwt.t =
     fun ~section packets ->
       Lwt_log.info_f ~section "receive packets [%s]"
@@ -603,10 +636,30 @@ module Transport = struct
     | Polling of Polling.t
     | WebSocket of WebSocket.t
 
-  let string_of_t : t -> string =
+  let name_of_t : t -> string =
     function
     | Polling _ -> Polling.name
     | WebSocket _ -> WebSocket.name
+
+  let ready_state_of_t : t -> ready_state =
+    function
+    | Polling polling -> Polling.(polling.ready_state)
+    | WebSocket websocket -> WebSocket.(websocket.ready_state)
+
+  let packet_stream_of_t : t -> Packet.t Lwt_stream.t =
+    function
+    | Polling polling ->
+      Polling.(polling.packet_stream)
+    | WebSocket websocket ->
+      WebSocket.(websocket.packet_stream)
+
+  let push_packet : t -> Packet.t option -> unit =
+    fun t packet ->
+      match t with
+      | Polling polling ->
+        Polling.(polling.push_packet packet)
+      | WebSocket websocket ->
+        WebSocket.(websocket.push_packet packet)
 
   let create_polling : Uri.t -> t =
     fun uri ->
@@ -647,21 +700,6 @@ module Transport = struct
       Polling (Polling.on_close polling)
     | WebSocket websocket ->
       WebSocket (WebSocket.on_close websocket)
-
-  let packet_stream : t -> Packet.t Lwt_stream.t =
-    function
-    | Polling polling ->
-      Polling.(polling.packet_stream)
-    | WebSocket websocket ->
-      WebSocket.(websocket.packet_stream)
-
-  let push_packet : t -> Packet.t option -> unit =
-    fun t packet ->
-      match t with
-      | Polling polling ->
-        Polling.(polling.push_packet packet)
-      | WebSocket websocket ->
-        WebSocket.(websocket.push_packet packet)
 
   let receive : t -> unit Lwt.t =
     function
@@ -825,19 +863,18 @@ module Socket = struct
     fun uri current_transport handshake ->
       let should_probe =
         List.exists ((=) Transport.WebSocket.name) Parser.(handshake.upgrades) &&
-        Transport.string_of_t current_transport <> Transport.WebSocket.name
+        Transport.name_of_t current_transport <> Transport.WebSocket.name
       in
       if should_probe then
-        let open Transport.WebSocket in
-        create uri
-        |> open_ >>= fun websocket ->
+        Transport.create_websocket uri
+        |> Transport.open_ >>= fun websocket ->
         Lwt_log.info ~section "Probing websocket transport..." >>= fun () ->
-        write websocket [Packet.ping_probe] >>= fun () ->
-        receive websocket >>= fun () ->
-        (Lwt_stream.get websocket.packet_stream >>= function
+        Transport.write websocket [Packet.ping_probe] >>= fun () ->
+        Transport.receive websocket >>= fun () ->
+        (Lwt_stream.get (Transport.packet_stream_of_t websocket) >>= function
           | Some (Packet.PONG, Packet.P_String "probe") ->
             Lwt_log.info ~section "Ok to upgrade." >>= fun () ->
-            Lwt.return (Some (Transport.WebSocket websocket))
+            Lwt.return (Some websocket)
           | Some (packet_type, packet_data) ->
             Lwt_log.error_f ~section "Can not upgrade. Expecting PONG, but got '%s'."
               (Packet.string_of_packet_type packet_type) >>= fun () ->
@@ -914,13 +951,8 @@ module Socket = struct
            ~default:"(no handshake)"
            ~f:(fun handshake -> Format.sprintf "(%s)" (Parser.string_of_handshake handshake))) >>= fun () ->
       Lwt_log.debug_f ~section "Transport is %s (%s)"
-        (string_of_ready_state
-           (match socket.transport with
-            | Transport.Polling polling ->
-              Transport.Polling.(polling.ready_state)
-            | Transport.WebSocket websocket ->
-              Transport.WebSocket.(websocket.ready_state)))
-        (Transport.string_of_t socket.transport)
+        (socket.transport |> Transport.ready_state_of_t |> string_of_ready_state)
+        (Transport.name_of_t socket.transport)
 
   let maybe_poll_again poll_promise socket =
     match socket.ready_state, Lwt.is_sleeping poll_promise with
@@ -980,7 +1012,7 @@ module Socket = struct
       Lwt.return socket
 
   let sleep_until_packet_received socket =
-    Lwt_stream.peek (Transport.packet_stream socket.transport) >>= fun _ ->
+    Lwt_stream.peek (Transport.packet_stream_of_t socket.transport) >>= fun _ ->
     Lwt_log.info ~section "Waking to process a packet"
 
   let sleep_until_packet_to_send packets_send_stream =
@@ -996,7 +1028,7 @@ module Socket = struct
       close socket
 
   let forward_until_close old_transport socket =
-    let old_packet_stream = Transport.packet_stream old_transport in
+    let old_packet_stream = Transport.packet_stream_of_t old_transport in
     let rec react_forever () =
       Lwt_stream.get old_packet_stream >>= function
       | None
@@ -1098,10 +1130,11 @@ module Socket = struct
                ]) >>= fun () ->
 
           (* Explicitly cancel the sleep promises. *)
+          Lwt_log.debug ~section "Canceling sleep promise." >>= fun () ->
           let () = Lwt.cancel sleep_promise in
 
-          (* Process packets receveived over the transport. *)
-          Transport.packet_stream socket.transport
+          (* Process packets received over the transport. *)
+          Transport.packet_stream_of_t socket.transport
           |> Lwt_stream.get_available
           |> Lwt_list.fold_left_s process_packet socket >>= fun socket ->
 
