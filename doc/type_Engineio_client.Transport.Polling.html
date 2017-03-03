@@ -8,10 +8,10 @@
 <link title="Index of modules" rel=Appendix href="index_modules.html">
 <link title="Index of module types" rel=Appendix href="index_module_types.html">
 <link title="Engineio_client" rel="Chapter" href="Engineio_client.html">
-<link title="Socketio_client" rel="Chapter" href="Socketio_client.html"><title>Socketio_client.Parser</title>
+<link title="Socketio_client" rel="Chapter" href="Socketio_client.html"><title>Engineio_client.Transport.Polling</title>
 </head>
 <body>
 <code class="code"><span class="keyword">sig</span>
-&nbsp;&nbsp;<span class="keyword">val</span>&nbsp;decode_packet&nbsp;:&nbsp;string&nbsp;<span class="keywordsign">-&gt;</span>&nbsp;<span class="constructor">Socketio_client</span>.<span class="constructor">Packet</span>.t
-&nbsp;&nbsp;<span class="keyword">val</span>&nbsp;encode_packet&nbsp;:&nbsp;<span class="constructor">Socketio_client</span>.<span class="constructor">Packet</span>.t&nbsp;<span class="keywordsign">-&gt;</span>&nbsp;string
+&nbsp;&nbsp;<span class="keyword">type</span>&nbsp;poll_error&nbsp;=&nbsp;{&nbsp;code&nbsp;:&nbsp;int;&nbsp;body&nbsp;:&nbsp;string;&nbsp;}
+&nbsp;&nbsp;<span class="keyword">exception</span>&nbsp;<span class="constructor">Polling_exception</span>&nbsp;<span class="keyword">of</span>&nbsp;<span class="constructor">Engineio_client</span>.<span class="constructor">Transport</span>.<span class="constructor">Polling</span>.poll_error
 <span class="keyword">end</span></code></body></html>

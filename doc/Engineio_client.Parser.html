@@ -4,19 +4,21 @@
 <link rel="stylesheet" href="style.css" type="text/css">
 <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
 <link rel="Start" href="index.html">
-<link rel="previous" href="Engineio_client.Packet.html">
-<link rel="next" href="Engineio_client.Socket.html">
+<link rel="previous" href="Engineio_client.Socket.html">
+<link rel="next" href="Engineio_client.Make_Socket.html">
 <link rel="Up" href="Engineio_client.html">
 <link title="Index of types" rel=Appendix href="index_types.html">
+<link title="Index of exceptions" rel=Appendix href="index_exceptions.html">
 <link title="Index of values" rel=Appendix href="index_values.html">
 <link title="Index of modules" rel=Appendix href="index_modules.html">
+<link title="Index of module types" rel=Appendix href="index_module_types.html">
 <link title="Engineio_client" rel="Chapter" href="Engineio_client.html">
 <link title="Socketio_client" rel="Chapter" href="Socketio_client.html"><title>Engineio_client.Parser</title>
 </head>
 <body>
-<div class="navbar"><a class="pre" href="Engineio_client.Packet.html" title="Engineio_client.Packet">Previous</a>
+<div class="navbar"><a class="pre" href="Engineio_client.Socket.html" title="Engineio_client.Socket">Previous</a>
 &nbsp;<a class="up" href="Engineio_client.html" title="Engineio_client">Up</a>
-&nbsp;<a class="post" href="Engineio_client.Socket.html" title="Engineio_client.Socket">Next</a>
+&nbsp;<a class="post" href="Engineio_client.Make_Socket.html" title="Engineio_client.Make_Socket">Next</a>
 </div>
 <h1>Module <a href="type_Engineio_client.Parser.html">Engineio_client.Parser</a></h1>
 
@@ -25,4 +27,37 @@
 Exposed for testing; not part of the public API.<br>
 
 <pre><span id="VALdecode_payload_as_binary"><span class="keyword">val</span> decode_payload_as_binary</span> : <code class="type">string -> <a href="Engineio_client.Packet.html#TYPEt">Engineio_client.Packet.t</a> list</code></pre>
-<pre><span id="VALencode_payload"><span class="keyword">val</span> encode_payload</span> : <code class="type"><a href="Engineio_client.Packet.html#TYPEt">Engineio_client.Packet.t</a> list -> string</code></pre></body></html>
+<pre><span id="VALencode_payload"><span class="keyword">val</span> encode_payload</span> : <code class="type"><a href="Engineio_client.Packet.html#TYPEt">Engineio_client.Packet.t</a> list -> string</code></pre>
+<pre><code><span id="TYPEhandshake"><span class="keyword">type</span> <code class="type"></code>handshake</span> = {</code></pre><table class="typetable">
+<tr>
+<td align="left" valign="top" >
+<code>&nbsp;&nbsp;</code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELThandshake.sid">sid</span>&nbsp;: <code class="type">string</code>;</code></td>
+
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code>&nbsp;&nbsp;</code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELThandshake.ping_interval">ping_interval</span>&nbsp;: <code class="type">int</code>;</code></td>
+
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code>&nbsp;&nbsp;</code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELThandshake.ping_timeout">ping_timeout</span>&nbsp;: <code class="type">int</code>;</code></td>
+
+</tr>
+<tr>
+<td align="left" valign="top" >
+<code>&nbsp;&nbsp;</code></td>
+<td align="left" valign="top" >
+<code><span id="TYPEELThandshake.upgrades">upgrades</span>&nbsp;: <code class="type">string list</code>;</code></td>
+
+</tr></table>
+}
+
+
+</body></html>
