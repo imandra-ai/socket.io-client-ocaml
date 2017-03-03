@@ -60,6 +60,97 @@ let engineio_parser_suite =
   ; "Engineio_client.Parser.encode_payload" >:: test_encode_payload
   ]
 
+let engineio_socket_suite =
+  let open Engineio_client in
+
+  let packet_stream, push_packet = Lwt_stream.create () in
+
+  let module Mock_Transport : Transport = struct
+    type mock_type = Polling | WebSocket
+
+    type t =
+      { mock_type : mock_type
+      ; ready_state : ready_state
+      ; packet_stream : Packet.t Lwt_stream.t
+      ; push_packet : Packet.t option -> unit
+      }
+
+    let create_mock mock_type =
+      { mock_type
+      ; ready_state = Closed
+      ; packet_stream
+      ; push_packet
+      }
+
+    let create_polling _ = create_mock Polling
+    let create_websocket _ = create_mock WebSocket
+
+    let name_of_t t =
+      match t.mock_type with
+      | Polling -> "polling"
+      | WebSocket -> "websocket"
+
+    let ready_state_of_t t = t.ready_state
+    let packet_stream_of_t t = t.packet_stream
+    let push_packet t = t.push_packet
+
+    let open_ t = Lwt.return { t with ready_state = Opening }
+    let write t packets = Lwt.return_unit
+    let receive t = Lwt.return_unit
+    let close t = Lwt.return { t with ready_state = Closed }
+
+    let on_open t handshake = { t with ready_state = Open }
+    let on_close t = { t with ready_state = Closed }
+
+    module Polling = struct
+      type poll_error =
+        { code : int
+        ; body : string
+        }
+
+      exception Polling_exception of poll_error
+    end
+
+    module WebSocket = struct
+      let name = "websocket"
+    end
+  end
+  in
+
+  let module Socket = Make_Socket(Mock_Transport) in
+
+  let test_connect test_ctxt =
+    let packet =
+      Lwt_main.run
+        (Socket.with_connection Uri.empty
+           Lwt.Infix.(fun user_packet_stream user_push_packet ->
+               let handshake_json =
+                 `Assoc
+                   [ ("sid", `String "some-sid")
+                   ; ("upgrades", `List [])
+                   ; ("pingInterval", `Int 25000)
+                   ; ("pingTimeout", `Int 60000)
+                   ]
+               in
+               push_packet
+                 (Some ( Packet.OPEN
+                       , Packet.P_String (Yojson.Basic.to_string handshake_json)
+                       ))
+               |> Lwt.return >>= fun () ->
+               Lwt.pick
+                 [ Lwt_unix.timeout 1.0
+                 ; Lwt_stream.get user_packet_stream
+                 ]
+             ))
+    in
+    match packet with
+    | None -> assert_failure "End of packet stream?"
+    | Some (Packet.OPEN,_) -> ()
+    | Some (packet,_) -> assert_failure (Printf.sprintf "Unexpected packet: %s" (Packet.string_of_packet_type packet))
+  in
+
+  [ "Engineio_client.Socket.with_connection" >:: test_connect ]
+
 let socketio_parser_suite =
   let open Socketio_client in
 
@@ -181,5 +272,6 @@ let () =
     ("suite" >:::
      List.concat
        [ engineio_parser_suite
+       ; engineio_socket_suite
        ; socketio_parser_suite
        ])

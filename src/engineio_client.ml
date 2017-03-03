@@ -718,7 +718,7 @@ module Transport : Transport = struct
       Lwt.return (WebSocket websocket)
 end
 
-module Socket = struct
+module Make_Socket(Transport : Transport) = struct
   let section = Lwt_log.Section.make "eio.socket"
 
   type t =
@@ -1179,3 +1179,5 @@ module Socket = struct
 
       maintain_connection poll_promise user_promise socket
 end
+
+module Socket = Make_Socket(Transport)

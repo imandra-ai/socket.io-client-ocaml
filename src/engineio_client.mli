@@ -50,6 +50,13 @@ module Parser : sig
 
   val decode_payload_as_binary : string -> Packet.t list
   val encode_payload : Packet.t list -> string
+
+  type handshake =
+    { sid : string
+    ; ping_interval : int
+    ; ping_timeout : int
+    ; upgrades : string list
+    }
 end
 
 module Socket : sig
@@ -73,3 +80,43 @@ module Socket : sig
   *)
   val with_connection : Uri.t -> ((Packet.t Lwt_stream.t) -> (string -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t
 end
+
+type ready_state =
+  | Opening
+  | Open
+  | Closed
+
+module type Transport = sig
+  type t
+
+  val create_polling : Uri.t -> t
+  val create_websocket : Uri.t -> t
+
+  val name_of_t : t -> string
+  val ready_state_of_t : t -> ready_state
+  val packet_stream_of_t : t -> Packet.t Lwt_stream.t
+  val push_packet : t -> Packet.t option -> unit
+
+  val open_ : t -> t Lwt.t
+  val write : t -> Packet.t list -> unit Lwt.t
+  val receive : t -> unit Lwt.t
+  val close : t -> t Lwt.t
+
+  val on_open : t -> Parser.handshake -> t
+  val on_close : t -> t
+
+  module Polling : sig
+    type poll_error =
+      { code : int
+      ; body : string
+      }
+
+    exception Polling_exception of poll_error
+  end
+
+  module WebSocket : sig
+    val name : string
+  end
+end
+
+module Make_Socket(T : Transport) : module type of Socket
