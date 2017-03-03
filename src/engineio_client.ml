@@ -351,6 +351,7 @@ module Transport : Transport = struct
       ; uri : Uri.t
       ; packet_stream : Packet.t Lwt_stream.t
       ; push_packet : Packet.t option -> unit
+      ; poll_timeout_millis : int
       }
 
     let name : string = "polling"
@@ -363,6 +364,7 @@ module Transport : Transport = struct
             Uri.add_query_param uri ("transport", [name])
         ; packet_stream
         ; push_packet
+        ; poll_timeout_millis = 1000
         }
 
     let log_packet : Packet.t -> unit Lwt.t =
@@ -416,7 +418,7 @@ module Transport : Transport = struct
               catch
                 (fun () ->
                    Lwt.pick
-                     [ Lwt_unix.timeout 1.0
+                     [ Lwt_unix.timeout ((float_of_int t.poll_timeout_millis) /. 1000.0)
                      ; Client.get
                          ~headers:(Header.init_with "accept" "application/json")
                          t.uri >>= process_response t
@@ -479,6 +481,8 @@ module Transport : Transport = struct
             t.uri
             |> (Eio_util.flip Uri.remove_query_param) "sid"
             |> (Eio_util.flip Uri.add_query_param) ("sid", [Parser.(handshake.sid)])
+        ; poll_timeout_millis =
+            Parser.(handshake.ping_timeout)
         }
 
     let on_close : t -> t =
@@ -488,6 +492,8 @@ module Transport : Transport = struct
         ; uri =
             t.uri
             |> (Eio_util.flip Uri.remove_query_param) "sid"
+        ; poll_timeout_millis =
+            1000
         }
 
     let close : t -> t Lwt.t =
