@@ -31,7 +31,7 @@ let assert_string_equal s1 s2 =
     s2
 
 let engineio_parser_suite =
-  let open Engineio_client in
+  let open Socketio_client.Engineio_client in
 
   let assert_packets_equal packets1 packets2 =
     assert_equal
@@ -68,7 +68,7 @@ let engineio_parser_suite =
   ]
 
 let engineio_socket_suite =
-  let open Engineio_client in
+  let open Socketio_client.Engineio_client in
   let open Lwt.Infix in
 
   let module Mock_Transport
@@ -253,9 +253,9 @@ let socketio_parser_suite =
       (match packet with
        | Packet.EVENT (_, args, _, nsp) ->
          Printf.sprintf "%s%s"
-           (nsp
-            |> Eio_util.Option.value_map ~default:""
-              ~f:(fun ns -> Printf.sprintf "nsp:%s " ns))
+           (match nsp with
+            | Some nsp -> Printf.sprintf "nsp:%s " nsp
+            | None -> "")
            (args
             |> List.map Yojson.Basic.to_string
             |> String.concat ", ")

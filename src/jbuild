@@ -1,0 +1,17 @@
+(jbuild_version 1)
+
+(library
+ ((name socketio_client)
+  (public_name socketio-client)
+  (libraries
+   (angstrom
+    cohttp-lwt-unix
+    lwt
+    str
+    stringext
+    uri
+    websocket-lwt
+    yojson
+  ))
+ )
+)

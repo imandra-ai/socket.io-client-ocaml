@@ -23,10 +23,12 @@ usage examples.
 
 ## Development
 
-Requires `opam`.
+With `opam2`:
 
 ```
-make dev-setup
+opam switch create ./
+eval $(opam env)
+opam install . --deps-only --with-test
 make build
 make test
 ```
@@ -36,12 +38,13 @@ make test
 Requires `node` and `npm`.
 
 ```
-make examples-setup
-make example-engineio-server
-make example-engineio-client
+make examples
 
-make example-socketio-server
-make example-socketio-client
+make run-example-engineio-server
+make run-example-engineio-client
+
+make run-example-socketio-server
+make run-example-socketio-client
 ```
 
 ## Documentation

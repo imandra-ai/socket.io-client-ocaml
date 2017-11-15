@@ -8,7 +8,7 @@ Lwt_log.default :=
 
 let () =
   Lwt_main.run
-    Lwt.(Engineio_client.(
+    Lwt.(Socketio_client.Engineio_client.(
         Lwt_io.printl "Starting..." >>= fun () ->
         let uri =
           Uri.make

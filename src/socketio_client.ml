@@ -68,7 +68,7 @@ end
 module Parser = struct
   module P = struct
     open Angstrom
-    open Eio_util.Angstrom
+    open Socketio_common.Angstrom
 
     let packet_connect : Packet.t Angstrom.t =
       option None
@@ -120,7 +120,7 @@ module Parser = struct
 
   let decode_packet : string -> Packet.t =
     fun data ->
-      match Angstrom.parse_only P.packet (`String data) with
+      match Angstrom.parse_string P.packet data with
       | Ok packet -> packet
       | Error message ->
         Packet.ERROR (Printf.sprintf "Error decoding packet: %s" message)
@@ -131,7 +131,7 @@ module Parser = struct
       | Packet.CONNECT namespace ->
         Printf.sprintf "%i%s"
           (Packet.int_of_t packet)
-          (Eio_util.Option.value ~default:"" namespace)
+          (Socketio_common.Option.value ~default:"" namespace)
       | Packet.DISCONNECT ->
         Printf.sprintf "%i"
           (Packet.int_of_t packet)
@@ -139,17 +139,17 @@ module Parser = struct
         Printf.sprintf "%i%s%s%s"
           (Packet.int_of_t packet)
           (nsp
-           |> Eio_util.Option.value_map ~default:""
+           |> Socketio_common.Option.value_map ~default:""
              ~f:(fun nsp -> Printf.sprintf "%s," nsp))
           (ack
-           |> Eio_util.Option.value_map ~default:""
+           |> Socketio_common.Option.value_map ~default:""
              ~f:string_of_int)
           (Yojson.Basic.to_string (`List (`String event_name :: data)))
       | Packet.ACK (data, ack_id, namespace) ->
         Printf.sprintf "%i%s%i%s"
           (Packet.int_of_t packet)
           (namespace
-           |> Eio_util.Option.value_map ~default:""
+           |> Socketio_common.Option.value_map ~default:""
              ~f:(fun nsp -> Printf.sprintf "%s," nsp))
           ack_id
           (Yojson.Basic.to_string (`List data))
@@ -428,3 +428,5 @@ module Socket = struct
            maintain_connection socket user_promise
         )
 end
+
+module Engineio_client = Engineio_client

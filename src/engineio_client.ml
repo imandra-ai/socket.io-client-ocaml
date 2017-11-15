@@ -124,7 +124,7 @@ module Parser = struct
 
   module P = struct
     open Angstrom
-    open Eio_util.Angstrom
+    open Socketio_common.Angstrom
 
     let packet : frame_encoding -> Packet.t Angstrom.t =
       fun frame_encoding ->
@@ -168,7 +168,7 @@ module Parser = struct
 
   let decode_packet : frame_encoding -> string -> Packet.t =
     fun frame_encoding data ->
-      match Angstrom.parse_only (P.packet frame_encoding) (`String data) with
+      match Angstrom.parse_string (P.packet frame_encoding) data with
       | Ok packet ->
         packet
       | Error message ->
@@ -184,7 +184,7 @@ module Parser = struct
 
   let decode_payload_as_binary : string -> Packet.t list =
     fun data ->
-      match Angstrom.parse_only P.payload (`String data) with
+      match Angstrom.parse_string P.payload data with
       | Error message ->
         [(Packet.ERROR, Packet.P_String (Printf.sprintf "Payload parse error: %s" message))]
       | Ok frames ->
@@ -479,8 +479,8 @@ module Transport : Transport = struct
           ready_state = Open
         ; uri =
             t.uri
-            |> (Eio_util.flip Uri.remove_query_param) "sid"
-            |> (Eio_util.flip Uri.add_query_param) ("sid", [Parser.(handshake.sid)])
+            |> (Socketio_common.flip Uri.remove_query_param) "sid"
+            |> (Socketio_common.flip Uri.add_query_param) ("sid", [Parser.(handshake.sid)])
         ; poll_timeout_millis =
             Parser.(handshake.ping_timeout)
         }
@@ -491,7 +491,7 @@ module Transport : Transport = struct
           ready_state = Closed
         ; uri =
             t.uri
-            |> (Eio_util.flip Uri.remove_query_param) "sid"
+            |> (Socketio_common.flip Uri.remove_query_param) "sid"
         ; poll_timeout_millis =
             1000
         }
@@ -511,7 +511,7 @@ module Transport : Transport = struct
     type t =
       { ready_state : ready_state
       ; uri : Uri.t
-      ; connection : ((unit -> Frame.t Lwt.t) * (Frame.t -> unit Lwt.t)) option
+      ; connection : ((unit -> Websocket.Frame.t Lwt.t) * (Websocket.Frame.t -> unit Lwt.t)) option
       ; packet_stream : Packet.t Lwt_stream.t
       ; push_packet : Packet.t option -> unit
       }
@@ -552,14 +552,14 @@ module Transport : Transport = struct
     let on_open : t -> Parser.handshake -> t =
       fun t handshake -> t
 
-    let write_frame : t -> Websocket_lwt.Frame.t -> unit Lwt.t =
+    let write_frame : t -> Websocket.Frame.t -> unit Lwt.t =
       fun t frame ->
         match t.connection with
         | None ->
           Lwt_log.info ~section "Write attempt with no connection."
         | Some (recv, send) ->
           Lwt_log.debug_f ~section "Sending frame %s"
-            (Frame.show frame |> Stringext.replace_all ~pattern:"\n  " ~with_:" ") >>= fun () ->
+            (Websocket.Frame.show frame |> Stringext.replace_all ~pattern:"\n  " ~with_:" ") >>= fun () ->
           send frame
 
     let write : t -> Packet.t list -> unit Lwt.t =
@@ -572,7 +572,7 @@ module Transport : Transport = struct
           packets
           |> Lwt_list.iter_s
             (fun packet ->
-               let frame = (Frame.create ~content:(Parser.encode_packet packet) ()) in
+               let frame = (Websocket.Frame.create ~content:(Parser.encode_packet packet) ()) in
                write_frame t frame)
 
     let receive : t -> unit Lwt.t =
@@ -584,9 +584,9 @@ module Transport : Transport = struct
           Lwt.return_unit
         | _, Some (recv, send) ->
           let react frame =
-            Frame.(
+            Websocket.Frame.(
               Lwt_log.debug_f ~section "Received frame %s"
-                (Frame.show frame |> Stringext.replace_all ~pattern:"\n  " ~with_:" ") >>= fun () ->
+                (Websocket.Frame.show frame |> Stringext.replace_all ~pattern:"\n  " ~with_:" ") >>= fun () ->
               match frame.opcode with
               | Opcode.Text ->
                 let packet = Parser.decode_packet_string frame.content in
@@ -595,7 +595,7 @@ module Transport : Transport = struct
                 let packet = Parser.decode_packet_binary frame.content in
                 Lwt.return_some packet
               | Opcode.Ping ->
-                send (Frame.create ~opcode:Opcode.Pong ()) >>= fun () ->
+                send (Websocket.Frame.create ~opcode:Opcode.Pong ()) >>= fun () ->
                 Lwt.return_none
               | Opcode.Pong ->
                 Lwt.return_none
@@ -608,14 +608,14 @@ module Transport : Transport = struct
                   )
               | _ ->
                 Lwt_log.error_f ~section "Unexpected frame %s"
-                  (Frame.show frame) >>= fun () ->
+                  (Websocket.Frame.show frame) >>= fun () ->
                 Lwt.return_none
             )
           in
           Lwt.catch
             (fun () -> recv () >>= react >>= fun packet_opt ->
-              log_receive_packets ~section (Eio_util.Option.to_list packet_opt) >>= fun () ->
-              let () = Eio_util.Option.iter ~f:(fun packet -> t.push_packet (Some packet)) packet_opt in
+              log_receive_packets ~section (Socketio_common.Option.to_list packet_opt) >>= fun () ->
+              let () = Socketio_common.Option.iter ~f:(fun packet -> t.push_packet (Some packet)) packet_opt in
               Lwt.return_unit
             )
             (fun exn ->
@@ -629,12 +629,12 @@ module Transport : Transport = struct
         ; connection = None
         ; uri =
             t.uri
-            |> (Eio_util.flip Uri.remove_query_param) "sid"
+            |> (Socketio_common.flip Uri.remove_query_param) "sid"
         }
 
     let close : t -> t Lwt.t =
       fun t ->
-        write_frame t (Frame.close 1000) >>= fun () ->
+        write_frame t (Websocket.Frame.close 1000) >>= fun () ->
         Lwt.return (on_close t)
   end
 
@@ -953,7 +953,7 @@ module Make_Socket(Transport : Transport) = struct
     fun socket ->
       Lwt_log.debug_f ~section "Socket is %s %s"
         (string_of_ready_state socket.ready_state)
-        (Eio_util.Option.value_map socket.handshake
+        (Socketio_common.Option.value_map socket.handshake
            ~default:"(no handshake)"
            ~f:(fun handshake -> Format.sprintf "(%s)" (Parser.string_of_handshake handshake))) >>= fun () ->
       Lwt_log.debug_f ~section "Transport is %s (%s)"
@@ -1070,7 +1070,7 @@ module Make_Socket(Transport : Transport) = struct
          (* NOTE: Here we are relying on the Engine.io server to send a packet
             on the old transport (usually a NOOP)
          *)
-         Eio_util.Lwt.ignore_exn (fun () -> poll_promise) >>= fun () ->
+         Socketio_common.Lwt.ignore_exn (fun () -> poll_promise) >>= fun () ->
 
          Lwt_log.info ~section "Sending UPGRADE." >>= fun () ->
          write socket [Packet.upgrade] >>= fun () ->
@@ -1134,8 +1134,8 @@ module Make_Socket(Transport : Transport) = struct
                  else
                    []
                ; socket.probe_promise
-                 |> Eio_util.Option.map ~f:(fun p -> p >>= fun _ -> Lwt.return_unit)
-                 |> Eio_util.Option.to_list
+                 |> Socketio_common.Option.map ~f:(fun p -> p >>= fun _ -> Lwt.return_unit)
+                 |> Socketio_common.Option.to_list
                ; [ poll_promise
                  ; sleep_promise
                  ]

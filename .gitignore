@@ -1,3 +1,5 @@
 _build
+_opam
 socketio-client.install
 node_modules
+.merlin

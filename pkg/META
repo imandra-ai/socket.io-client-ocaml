@@ -1,8 +1,0 @@
-description = "Socket.io client"
-version = "%%VERSION_NUM%%"
-requires = "angstrom cohttp.lwt lwt stringext websocket.lwt yojson"
-
-archive(byte) = "socketio_client.cma"
-archive(native) = "socketio_client.cmxa"
-plugin(byte) = "socketio_client.cma"
-plugin(native) = "socketio_client.cmxs"

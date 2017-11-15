@@ -6,20 +6,15 @@ authors: "Matt Bray <matt@aestheticintegration.com>"
 homepage: "https://github.com/AestheticIntegration/socket.io-client-ocaml"
 bug-reports: "https://github.com/AestheticIntegration/socket.io-client-ocaml/issues"
 license: "APACHE-2.0"
-dev-repo: "https://github.com/AestheticIntegration/socket.io-client-ocaml"
+dev-repo: "git+https://github.com/AestheticIntegration/socket.io-client-ocaml"
 doc: "https://AestheticIntegration.github.io/socket.io-client-ocaml/doc"
-build: [
-  [ "ocaml" "pkg/pkg.ml" "build" "--pinned" "%{pinned}%" ]
-]
+build: [[ "jbuilder" "build" "-p" name "-j" jobs ]]
 depends: [
-  "ocamlfind" {build}
-  "ocamlbuild" {build}
-  "topkg" {build}
+  "jbuilder" {build}
   "ounit" {test}
-  "angstrom"
-  "cohttp"
-  "lwt"
-  "stringext"
-  "websocket"
+  "angstrom" {>= "0.7.0"}
+  "cohttp-lwt-unix" {>= "0.99.0"}
+  "ssl" {>= "0.5.2"}
+  "websocket-lwt" {>= "2.10"}
   "yojson"
 ]

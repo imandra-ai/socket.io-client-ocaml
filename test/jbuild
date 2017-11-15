@@ -1,0 +1,12 @@
+(jbuild_version 1)
+
+(executable
+ ((name main)
+  (libraries (socketio-client ounit))))
+
+(alias
+ ((name runtest)
+  (deps (main.exe))
+  ; See https://forge.ocamlcore.org/tracker/index.php?func=detail&aid=1363&group_id=162&atid=730
+  ; for why we use '-runner sequential'.
+  (action (run ${<} -runner sequential))))

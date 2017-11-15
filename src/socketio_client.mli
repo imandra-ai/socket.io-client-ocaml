@@ -80,3 +80,5 @@ module Socket : sig
   *)
   val with_connection : Uri.t -> ?namespace:string -> ((Packet.t Lwt_stream.t) -> (Packet.t -> unit Lwt.t) -> 'a Lwt.t) -> 'a Lwt.t
 end
+
+module Engineio_client : module type of Engineio_client
