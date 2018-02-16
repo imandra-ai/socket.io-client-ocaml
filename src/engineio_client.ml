@@ -383,7 +383,7 @@ module Transport : Transport = struct
 
     exception Polling_exception of poll_error
 
-    let process_response : t -> Cohttp_lwt_unix.Response.t * Cohttp_lwt_body.t -> unit Lwt.t =
+    let process_response : t -> Cohttp_lwt_unix.Response.t * Cohttp_lwt.Body.t -> unit Lwt.t =
       fun t (resp, body) ->
         Cohttp.(Cohttp_lwt_unix.(
             let code =
@@ -392,7 +392,7 @@ module Transport : Transport = struct
               |> Code.code_of_status in
             Lwt_log.debug_f ~section "Received status code: %i" code >>= fun () ->
             if Code.is_success code then
-              Cohttp_lwt_body.to_string_list body
+              Cohttp_lwt.Body.to_string_list body
               >>= Lwt_list.map_s
                 (fun line ->
                    Lwt_log.debug_f ~section "Got line in body: '%s'" (String.escaped line) >>= fun () ->
@@ -405,7 +405,7 @@ module Transport : Transport = struct
               List.iter (fun packet -> t.push_packet (Some packet)) packets;
               Lwt.return_unit
             else
-              Cohttp_lwt_body.to_string body >>= fun body ->
+              Cohttp_lwt.Body.to_string body >>= fun body ->
               Lwt_log.error_f ~section "%s" body >>= fun () ->
               Lwt.fail (Polling_exception { code; body })
           ))
@@ -462,7 +462,7 @@ module Transport : Transport = struct
               (fun () ->
                  Client.post
                    ~headers:(Header.init_with "content-type" "application/octet-stream")
-                   ~body:(encoded_payload |> Cohttp_lwt_body.of_string)
+                   ~body:(encoded_payload |> Cohttp_lwt.Body.of_string)
                    t.uri >>= fun (resp, body) ->
                  return_unit
               )
